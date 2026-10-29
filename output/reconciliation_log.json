@@ -1,6 +1,6 @@
 [
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-008",
@@ -14,7 +14,7 @@
     "reason": "GTM owner is set in Salesforce and governed by Sales management."
   },
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-010",
@@ -28,7 +28,7 @@
     "reason": "AE may renegotiate post-approval; the more recent value is the current truth."
   },
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-011",
@@ -42,7 +42,7 @@
     "reason": "Commercial record is the legal entity source."
   },
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-012",
@@ -56,7 +56,7 @@
     "reason": "Record present in salesforce only; missing from mission_control."
   },
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-013",
@@ -70,7 +70,7 @@
     "reason": "Named similarly but mean different things. Salesforce indicates the commercial side has pushed the handoff; Mission Control indicates the delivery team has acknowledged receipt. The SOP has not decided whether these should be mirrored or kept separate. Flag until resolved.\n"
   },
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-014",
@@ -84,7 +84,7 @@
     "reason": "Most recent change 2.8h ago; below 4h persistence threshold."
   },
   {
-    "run_id": "57da4d56-231e-48bf-9df4-deb8c0364158",
+    "run_id": "a20f6095-3677-42c0-82d5-547256bc588d",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-015",
