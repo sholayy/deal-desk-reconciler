@@ -50,7 +50,7 @@ output/                   # generated outputs (Slack messages, dashboard, JSON l
 
 **The engine refuses to auto-create missing records.** Opening a Mission Control record implies committing delivery resources and a start date. That's a human decision, not a data decision. The engine flags; humans act.
 
-**The persistence threshold exists because systems lag.** A field updated 20 minutes ago may not have propagated yet. Acting on it would create false corrections and erode trust. Threshold is 4 hours, reviewed quarterly.
+**The persistence threshold exists because systems lag.** A field updated 20 minutes ago may not have propagated yet. Acting on it would create false corrections and erode trust. The same threshold applies to missing records: an opportunity created in Salesforce an hour ago has not had time to open its Mission Control counterpart, so it is held rather than flagged. Threshold is 4 hours, reviewed quarterly.
 
 **Daily Slack post + weekly rollup, no operational dashboard.** Ops teams live in Slack. A separate dashboard as a task-management tool is a new habit nobody wants. The dashboard exists only as observability — a monitoring surface for people who want to understand the system, not operate it.
 
@@ -79,7 +79,6 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 
 - **No write-back layer.** The engine classifies and proposes corrections based on the SOP. It does not currently update Salesforce or Mission Control. Dashboard and Slack labels reflect this ("proposed" not "applied"). Next step: a write-back module with explicit `execution_status` tracking (proposed → applied → failed) and dry-run mode as the default. The audit log is the source of truth that layer would read from.
 - **Recency uses record-level timestamps.** Comparing `last_modified_ts_sf` and `last_modified_ts_mc` doesn't tell you which specific field changed most recently. A newer owner update doesn't mean the contract value is newer. Field-level change history is the proper fix. Until then, treat recency decisions as directional and favor the ownership rule where ambiguity matters.
-- **Missing records are flagged immediately** instead of being subject to the 4-hour persistence threshold. A record created in Salesforce 20 minutes ago may just not have been opened in Mission Control yet. The missing-record path should apply the same stabilization logic as field discrepancies.
 - **Missing field values are skipped silently.** When either side's value is `NaN`, the comparison is bypassed. That hides real data quality problems. The right fix: track skipped comparisons as a separate category and surface them in the weekly rollup.
 - **No automated tests.** The mock CSVs are useful test fixtures. First test coverage would be: missing records in both directions, matching fields, ownership rules, recency ties, missing values, timestamp boundary conditions, repeat runs, contract gaps, run_id dedupe.
 
