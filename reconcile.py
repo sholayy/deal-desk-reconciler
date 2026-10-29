@@ -386,9 +386,11 @@ def emit_outputs(discrepancies):
         for flag in flags:
             opp_link = _build_opp_link(flag["opportunity_id"], flag.get("sf_record_id"))
             if flag["bucket"] == "missing_record":
+                missing_from_sf = "missing from salesforce" in (flag.get("reason") or "").lower()
+                missing_direction = "Salesforce" if missing_from_sf else "Mission Control"
                 lines.append(
-                    f"*{opp_link}* — Missing Mission Control record. "
-                    f"{flag['reason']} Runbook: Missing Mission Control record."
+                    f"*{opp_link}* — Missing {missing_direction} record. "
+                    f"{flag['reason']} Runbook: Missing record."
                 )
             elif flag["bucket"] == "contract_gap":
                 lines.append(
@@ -586,7 +588,7 @@ def _held_eligibility_line(reason, run_timestamp, threshold_hours=4):
     """
     import re
     from datetime import timedelta
-    match = re.search(r"([\d.]+)h ago", reason or "")
+    match = re.search(r"([\d.]+)h (?:ago|old)", reason or "")
     if not match:
         return reason
     try:
@@ -656,9 +658,14 @@ def emit_dashboard():
             url = f"{_SF_BASE_URL}/{sf_record}/view"
             link_html = f'<a href="{_h(url)}" class="card-btn" target="_blank" rel="noopener noreferrer">Open in Salesforce ↗</a>'
         if f["bucket"] == "missing_record":
-            title = "Missing from Mission Control"
-            action = "Confirm the engagement is still active, then open the delivery record."
-            runbook = "Missing Mission Control record"
+            missing_from_sf = "missing from salesforce" in (f.get("reason") or "").lower()
+            if missing_from_sf:
+                title = "Missing from Salesforce"
+                action = "Investigate why the delivery record has no corresponding Salesforce opportunity."
+            else:
+                title = "Missing from Mission Control"
+                action = "Confirm the engagement is still active, then open the delivery record."
+            runbook = "Missing record"
         else:
             title = f"Policy gap: {_h(_format_concept_name(f['concept']))}"
             action = "SOP has not named an owner for this field. Decide and update contract.yaml."

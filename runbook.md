@@ -9,9 +9,13 @@ The goal of this runbook is to make itself shorter over time. Every flag resolve
 
 ---
 
-## Missing Mission Control record
+## Missing record
 
-**When you see this:** an opportunity exists in Salesforce with commercial approval complete, but no corresponding record exists in Mission Control. The reconciliation will not auto-create the record. Opening a Mission Control record implies committing delivery resources and a start date, which the system can't determine from Salesforce fields alone.
+A record exists in one system but not the other. The direction decides the response. The reconciliation does not auto-create either side. Opening a Mission Control record implies committing delivery resources and a start date; opening a Salesforce opportunity implies commercial terms. Neither can be determined from the counterpart alone.
+
+### Missing from Mission Control
+
+**When you see this:** an opportunity exists in Salesforce with commercial approval complete, but no corresponding record exists in Mission Control.
 
 **Before pinging anyone, check:**
 
@@ -23,7 +27,23 @@ The goal of this runbook is to make itself shorter over time. Every flag resolve
 
 **Escalation:** if the opportunity is high-value or urgent and no EPM responds within 48 hours, raise it in the next Deal Desk ops sync.
 
-**Why these checks come first:** the point of this role is reducing noise, not producing it. If the system flags something that's really just stale data on the AE's side, pinging an EPM to open a record wastes their time *and* trains them to ignore future flags. Clean the data first, then escalate only what's genuinely a handoff gap.
+### Missing from Salesforce
+
+**When you see this:** a delivery record exists in Mission Control, but no corresponding opportunity exists in Salesforce. Delivery is working on an engagement with no commercial record. This is the more serious direction. Pipeline reporting, revenue recognition, and quota attainment all depend on the Salesforce record.
+
+**Before pinging anyone, check:**
+
+1. Is the Mission Control record a real engagement? Confirm with the delivery squad that an actual engagement is underway and this is not a speculative or draft project record. If it was created in error, archive it. The flag clears on the next run.
+2. Does a Salesforce opportunity exist under a different ID or a different account name? Check with the AE assigned to the account before assuming nothing exists. Sometimes the handoff referenced one record and the opportunity got re-parented or renamed during a merger.
+3. Is this a recent closed-won that Salesforce has not finished archiving or renaming? If so, hold until the next run.
+
+**Only once all three are no:** this is a legitimate missing opportunity that needs reconstructing in Salesforce. The AE or Deal Desk creates the opportunity using the contract value, start date, and account name from Mission Control. The audit log entry for this flag is your source of truth for which account was engaged on which date.
+
+**Escalation:** if delivery has been underway for more than a week with no Salesforce record, raise it in the next Deal Desk ops sync. The gap is now actively affecting pipeline reporting.
+
+### Why these checks come first (both directions)
+
+The point of this role is reducing noise, not producing it. If the system flags something that's really just stale data on one side, pinging the other team wastes their time *and* trains them to ignore future flags. Clean the data first, then escalate only what's genuinely a handoff gap.
 
 ---
 
