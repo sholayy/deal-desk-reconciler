@@ -1,6 +1,6 @@
 # Deal Desk Reconciliation
 
-A small reconciliation engine for two systems that don't talk to each other — with an SOP, a human escape hatch, and a bias toward silence.
+A small reconciliation engine for two systems that don't talk to each other — with an SOP, a human check, and a bias toward silence.
 
 ## The problem
 
