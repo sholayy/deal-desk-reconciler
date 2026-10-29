@@ -1,0 +1,14 @@
+mc_project_id,account,engagement_value,commercial_contact,delivery_squad,kickoff_date,project_status,program_lead,updated_at,handoff_received
+MC-OPP-001,Northwind Technologies Inc.,250000,Priya Shah,Squad Alpha,2026-11-01,In Progress,Sam Patel,2026-10-20T14:35:00Z,true
+MC-OPP-002,Riverside Health,420000,Jordan Kim,Squad Beta,2026-10-28,In Progress,Rachel Nguyen,2026-10-18T09:20:00Z,true
+MC-OPP-003,Beacon Analytics,180000,Marcus Chen,Squad Gamma,2026-11-05,Not Started,Sam Patel,2026-10-21T11:10:00Z,true
+MC-OPP-004,Vista Logistics,615000,Priya Shah,Squad Alpha,2026-10-25,In Progress,Rachel Nguyen,2026-10-15T16:50:00Z,true
+MC-OPP-005,Harbor Financial Group,890000,Elena Rodriguez,Squad Delta,2026-11-10,Not Started,Devon Walsh,2026-10-19T10:25:00Z,true
+MC-OPP-006,Cedar Mountain Co-op,145000,Jordan Kim,Squad Beta,2026-11-15,Not Started,Rachel Nguyen,2026-10-22T08:35:00Z,true
+MC-OPP-007,Lakeside Media,320000,Marcus Chen,Squad Gamma,2026-10-30,In Progress,Sam Patel,2026-10-17T13:05:00Z,true
+MC-OPP-008,Summit Robotics,275000,Jordan Kim,Squad Alpha,2026-11-03,Not Started,Devon Walsh,2026-10-18T12:00:00Z,true
+MC-OPP-010,Delta Research Labs,500000,Elena Rodriguez,Squad Delta,2026-11-08,Not Started,Devon Walsh,2026-10-17T14:00:00Z,true
+MC-OPP-011,Northwind Technologies,340000,Priya Shah,Squad Alpha,2026-11-20,Not Started,Sam Patel,2026-10-06T09:00:00Z,true
+MC-OPP-013,Meridian Energy,720000,Elena Rodriguez,Squad Delta,2026-11-18,Not Started,Devon Walsh,2026-10-21T11:35:00Z,false
+MC-OPP-014,Juniper Software,245000,Jordan Kim,Squad Beta,2026-11-25,Not Started,Rachel Nguyen,2026-10-28T09:30:00Z,true
+MC-OPP-015,Pacific Dental Group,195000,Marcus Chen,Squad Gamma,2026-11-12,Not Started,Sam Patel,2026-10-28T09:00:00Z,true

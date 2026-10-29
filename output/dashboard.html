@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deal Desk Reconciliation — 2026-10-28</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --panel: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --flag: #fef3c7;
+    --flag-border: #f59e0b;
+    --correct: #dbeafe;
+    --correct-border: #3b82f6;
+    --hold: #f3f4f6;
+    --hold-border: #9ca3af;
+    --accent: #0f172a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 2rem 1rem;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { margin-bottom: 2.5rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.3rem 0; }
+  .subtitle { color: var(--muted); font-size: 0.95rem; }
+  .stats {
+    display: flex; gap: 2rem; margin-top: 1.25rem;
+    padding: 1rem 1.25rem; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  .stat-num { font-size: 1.5rem; font-weight: 600; }
+  .stat-label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  section { margin-bottom: 3rem; }
+  h2 { font-size: 1.1rem; margin: 0 0 0.4rem 0; }
+  .section-desc { color: var(--muted); font-size: 0.9rem; margin: 0 0 1rem 0; }
+  .tables-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 800px) { .tables-row { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; overflow: hidden;
+  }
+  .panel-head {
+    padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 0.9rem;
+  }
+  .panel-body { padding: 1rem; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th, td { padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr.flag-row td { background: var(--flag); border-left: 3px solid var(--flag-border); }
+  tr.flag-row td:first-child { font-weight: 600; }
+  tr.action-correct { background: var(--correct); }
+  tr.action-correct td { border-left: 3px solid var(--correct-border); }
+  tr.action-correct td:not(:first-child) { border-left: none; }
+  tr.action-flag { background: var(--flag); }
+  tr.action-flag td { border-left: 3px solid var(--flag-border); }
+  tr.action-flag td:not(:first-child) { border-left: none; }
+  tr.action-hold { background: var(--hold); }
+  tr.action-hold td { border-left: 3px solid var(--hold-border); }
+  tr.action-hold td:not(:first-child) { border-left: none; }
+  .reason { color: var(--muted); font-style: italic; }
+  .outputs-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 800px) { .outputs-row { grid-template-columns: 1fr; } }
+  .slack-render {
+    font-family: -apple-system, sans-serif;
+    font-size: 0.88rem; padding: 1rem; line-height: 1.6;
+  }
+  .log-sample { font-family: "SF Mono", Menlo, monospace; font-size: 0.78rem; }
+  footer {
+    margin-top: 3rem; padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 0.85rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Deal Desk Reconciliation</h1>
+  <div class="subtitle">Run of 2026-10-28 · showing today's state</div>
+  <div class="stats">
+    <div><div class="stat-num">6</div><div class="stat-label">Auto-corrections</div></div>
+    <div><div class="stat-num">4</div><div class="stat-label">Flagged for action</div></div>
+    <div><div class="stat-num">4</div><div class="stat-label">Held below threshold</div></div>
+    <div><div class="stat-num">14</div><div class="stat-label">Total discrepancies</div></div>
+  </div>
+</header>
+
+<section>
+  <h2>1. What the system sees</h2>
+  <p class="section-desc">Two systems, same opportunities, different vocabularies. Neither pushes to the other. Rows with discrepancies are highlighted.</p>
+  <div class="tables-row">
+    <div class="panel">
+      <div class="panel-head">Salesforce export</div>
+      <div class="panel-body"><table><thead><tr><th>opportunity_id</th><th>customer_name</th><th>contract_value_usd</th><th>commercial_approval_status</th><th>opportunity_owner</th><th>stage</th><th>last_modified_ts</th><th>handoff_submitted</th><th>sf_record_id</th></tr></thead><tbody><tr><td>OPP-001</td><td>Northwind Technologies Inc.</td><td>250000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-20T14:30:00Z</td><td>True</td><td>0066g00000MOCK01</td></tr><tr><td>OPP-002</td><td>Riverside Health</td><td>420000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-18T09:15:00Z</td><td>True</td><td>0066g00000MOCK02</td></tr><tr><td>OPP-003</td><td>Beacon Analytics</td><td>180000</td><td>Approved</td><td>Marcus Chen</td><td>Handoff</td><td>2026-10-21T11:00:00Z</td><td>True</td><td>0066g00000MOCK03</td></tr><tr><td>OPP-004</td><td>Vista Logistics</td><td>615000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-15T16:45:00Z</td><td>True</td><td>0066g00000MOCK04</td></tr><tr><td>OPP-005</td><td>Harbor Financial Group</td><td>890000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-19T10:20:00Z</td><td>True</td><td>0066g00000MOCK05</td></tr><tr><td>OPP-006</td><td>Cedar Mountain Co-op</td><td>145000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-22T08:30:00Z</td><td>True</td><td>0066g00000MOCK06</td></tr><tr><td>OPP-007</td><td>Lakeside Media</td><td>320000</td><td>Approved</td><td>Marcus Chen</td><td>Handoff</td><td>2026-10-17T13:00:00Z</td><td>True</td><td>0066g00000MOCK07</td></tr><tr class="flag-row"><td>OPP-008</td><td>Summit Robotics</td><td>275000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-20T15:00:00Z</td><td>True</td><td>0066g00000MOCK08</td></tr><tr class="flag-row"><td>OPP-010</td><td>Delta Research Labs</td><td>480000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-26T10:00:00Z</td><td>True</td><td>0066g00000MOCK10</td></tr><tr class="flag-row"><td>OPP-011</td><td>Northwind Technologies Inc.</td><td>340000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-27T09:00:00Z</td><td>True</td><td>0066g00000MOCK11</td></tr><tr class="flag-row"><td>OPP-012</td><td>Atlas Freight Services</td><td>560000</td><td>Approved</td><td>Marcus Chen</td><td>Approved</td><td>2026-10-23T14:00:00Z</td><td>True</td><td>0066g00000MOCK12</td></tr><tr class="flag-row"><td>OPP-013</td><td>Meridian Energy</td><td>720000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-21T11:30:00Z</td><td>True</td><td>0066g00000MOCK13</td></tr><tr class="flag-row"><td>OPP-014</td><td>Juniper Software</td><td>250000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-28T10:40:00Z</td><td>True</td><td>0066g00000MOCK14</td></tr><tr class="flag-row"><td>OPP-015</td><td>Pacific Dental Group</td><td>195000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-28T10:45:00Z</td><td>True</td><td>0066g00000MOCK15</td></tr></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">Mission Control export</div>
+      <div class="panel-body"><table><thead><tr><th>mc_project_id</th><th>account</th><th>engagement_value</th><th>commercial_contact</th><th>delivery_squad</th><th>kickoff_date</th><th>project_status</th><th>program_lead</th><th>updated_at</th><th>handoff_received</th></tr></thead><tbody><tr><td>MC-OPP-001</td><td>Northwind Technologies Inc.</td><td>250000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-11-01</td><td>In Progress</td><td>Sam Patel</td><td>2026-10-20T14:35:00Z</td><td>True</td></tr><tr><td>MC-OPP-002</td><td>Riverside Health</td><td>420000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-10-28</td><td>In Progress</td><td>Rachel Nguyen</td><td>2026-10-18T09:20:00Z</td><td>True</td></tr><tr><td>MC-OPP-003</td><td>Beacon Analytics</td><td>180000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-11-05</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-21T11:10:00Z</td><td>True</td></tr><tr><td>MC-OPP-004</td><td>Vista Logistics</td><td>615000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-10-25</td><td>In Progress</td><td>Rachel Nguyen</td><td>2026-10-15T16:50:00Z</td><td>True</td></tr><tr><td>MC-OPP-005</td><td>Harbor Financial Group</td><td>890000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-10</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-19T10:25:00Z</td><td>True</td></tr><tr><td>MC-OPP-006</td><td>Cedar Mountain Co-op</td><td>145000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-11-15</td><td>Not Started</td><td>Rachel Nguyen</td><td>2026-10-22T08:35:00Z</td><td>True</td></tr><tr><td>MC-OPP-007</td><td>Lakeside Media</td><td>320000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-10-30</td><td>In Progress</td><td>Sam Patel</td><td>2026-10-17T13:05:00Z</td><td>True</td></tr><tr class="flag-row"><td>MC-OPP-008</td><td>Summit Robotics</td><td>275000</td><td>Jordan Kim</td><td>Squad Alpha</td><td>2026-11-03</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-18T12:00:00Z</td><td>True</td></tr><tr class="flag-row"><td>MC-OPP-010</td><td>Delta Research Labs</td><td>500000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-08</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-17T14:00:00Z</td><td>True</td></tr><tr class="flag-row"><td>MC-OPP-011</td><td>Northwind Technologies</td><td>340000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-11-20</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-06T09:00:00Z</td><td>True</td></tr><tr class="flag-row"><td>MC-OPP-013</td><td>Meridian Energy</td><td>720000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-18</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-21T11:35:00Z</td><td>False</td></tr><tr class="flag-row"><td>MC-OPP-014</td><td>Juniper Software</td><td>245000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-11-25</td><td>Not Started</td><td>Rachel Nguyen</td><td>2026-10-28T09:30:00Z</td><td>True</td></tr><tr class="flag-row"><td>MC-OPP-015</td><td>Pacific Dental Group</td><td>195000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-11-12</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-28T09:00:00Z</td><td>True</td></tr></tbody></table></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>2. How each discrepancy classified</h2>
+  <p class="section-desc">The engine classifies, logs, and either acts or flags. Nothing happens that the SOP didn't explicitly authorize.</p>
+  <div class="panel">
+    <div class="panel-body">
+        <table>
+            <thead>
+                <tr>
+                    <th>Opportunity</th>
+                    <th>Field</th>
+                    <th>Bucket</th>
+                    <th>Rule</th>
+                    <th>Action</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+            <tr class="action-correct">
+                <td><strong>OPP-008</strong></td>
+                <td>opportunity_owner</td>
+                <td>owned field</td>
+                <td>ownership</td>
+                <td>auto correct</td>
+                <td class="reason">GTM owner is set in Salesforce and governed by Sales management.</td>
+            </tr>
+        
+            <tr class="action-correct">
+                <td><strong>OPP-010</strong></td>
+                <td>contract_value</td>
+                <td>shared field</td>
+                <td>recency</td>
+                <td>auto correct</td>
+                <td class="reason">AE may renegotiate post-approval; the more recent value is the current truth.</td>
+            </tr>
+        
+            <tr class="action-correct">
+                <td><strong>OPP-011</strong></td>
+                <td>customer_name</td>
+                <td>owned field</td>
+                <td>ownership</td>
+                <td>auto correct</td>
+                <td class="reason">Commercial record is the legal entity source.</td>
+            </tr>
+        
+            <tr class="action-flag">
+                <td><strong>OPP-012</strong></td>
+                <td>—</td>
+                <td>missing record</td>
+                <td>none</td>
+                <td>flag</td>
+                <td class="reason">Record present in salesforce only; missing from mission_control.</td>
+            </tr>
+        
+            <tr class="action-flag">
+                <td><strong>OPP-013</strong></td>
+                <td>handoff_flag</td>
+                <td>contract gap</td>
+                <td>none</td>
+                <td>flag</td>
+                <td class="reason">Named similarly but mean different things. Salesforce indicates the commercial side has pushed the handoff; Mission Control indicates the delivery team has acknowledged receipt. The SOP has not decided whether these should be mirrored or kept separate. Flag until resolved.
+</td>
+            </tr>
+        
+            <tr class="action-hold">
+                <td><strong>OPP-014</strong></td>
+                <td>contract_value</td>
+                <td>below threshold</td>
+                <td>none</td>
+                <td>hold</td>
+                <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
+            </tr>
+        
+            <tr class="action-hold">
+                <td><strong>OPP-015</strong></td>
+                <td>opportunity_owner</td>
+                <td>below threshold</td>
+                <td>none</td>
+                <td>hold</td>
+                <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
+            </tr>
+        
+            <tr class="action-correct">
+                <td><strong>OPP-008</strong></td>
+                <td>opportunity_owner</td>
+                <td>owned field</td>
+                <td>ownership</td>
+                <td>auto correct</td>
+                <td class="reason">GTM owner is set in Salesforce and governed by Sales management.</td>
+            </tr>
+        
+            <tr class="action-correct">
+                <td><strong>OPP-010</strong></td>
+                <td>contract_value</td>
+                <td>shared field</td>
+                <td>recency</td>
+                <td>auto correct</td>
+                <td class="reason">AE may renegotiate post-approval; the more recent value is the current truth.</td>
+            </tr>
+        
+            <tr class="action-correct">
+                <td><strong>OPP-011</strong></td>
+                <td>customer_name</td>
+                <td>owned field</td>
+                <td>ownership</td>
+                <td>auto correct</td>
+                <td class="reason">Commercial record is the legal entity source.</td>
+            </tr>
+        
+            <tr class="action-flag">
+                <td><strong>OPP-012</strong></td>
+                <td>—</td>
+                <td>missing record</td>
+                <td>none</td>
+                <td>flag</td>
+                <td class="reason">Record present in salesforce only; missing from mission_control.</td>
+            </tr>
+        
+            <tr class="action-flag">
+                <td><strong>OPP-013</strong></td>
+                <td>handoff_flag</td>
+                <td>contract gap</td>
+                <td>none</td>
+                <td>flag</td>
+                <td class="reason">Named similarly but mean different things. Salesforce indicates the commercial side has pushed the handoff; Mission Control indicates the delivery team has acknowledged receipt. The SOP has not decided whether these should be mirrored or kept separate. Flag until resolved.
+</td>
+            </tr>
+        
+            <tr class="action-hold">
+                <td><strong>OPP-014</strong></td>
+                <td>contract_value</td>
+                <td>below threshold</td>
+                <td>none</td>
+                <td>hold</td>
+                <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
+            </tr>
+        
+            <tr class="action-hold">
+                <td><strong>OPP-015</strong></td>
+                <td>opportunity_owner</td>
+                <td>below threshold</td>
+                <td>none</td>
+                <td>hold</td>
+                <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
+            </tr>
+        </tbody>
+        </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3. What each reader sees</h2>
+  <p class="section-desc">Three outputs, three readers, three cadences — all from the same source.</p>
+  <div class="outputs-row">
+    <div class="panel">
+      <div class="panel-head">Daily Slack post</div>
+      <div class="panel-body slack-render"><strong>Deal Desk reconciliation — Wednesday Oct 28</strong><br><br>2 opportunities need attention.<br><br><strong>OPP-012</strong> — Missing Mission Control record. Record present in salesforce only; missing from mission<em>control. Runbook: Missing Mission Control record.<br><br><strong>OPP-013</strong> — handoff</em>flag fields disagree between systems. SOP does not name an owner. Runbook: Contract gap.<br><br>3 silent corrections also applied.<br>(2 held below persistence threshold.)<br><br>Weekly rollup: output/slack/weekly_2026-10-28.txt</div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">Weekly rollup</div>
+      <div class="panel-body slack-render"><strong>Deal Desk reconciliation — weekly rollup: Week ending Wednesday Oct 28</strong><br><br>14 discrepancies this week. 6 auto-corrected, 4 flagged, 4 held below threshold.<br><br><strong>Fields drifting most (recency corrections):</strong><br>  • contract<em>value: 2 corrections<br><br></em>Pattern worth watching: contract<em>value drifted 2 times this week. Likely an upstream process gap — raise in next ops sync.</em><br><br><strong>Contract gaps surfaced this week (SOP needs decisions):</strong><br>  • handoff<em>flag<br><br>Full log: output/reconciliation</em>log.json<br>Runbook: runbook.md</div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top: 1rem;">
+    <div class="panel-head">Audit log (sample)</div>
+    <div class="panel-body">
+        <table class="log-sample">
+            <thead>
+                <tr>
+                    <th>Timestamp (UTC)</th>
+                    <th>Opportunity</th>
+                    <th>Bucket</th>
+                    <th>Action</th>
+                    <th>Winner</th>
+                </tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td>2026-10-28 13:30</td>
+                <td>OPP-008</td>
+                <td>owned field</td>
+                <td>auto correct</td>
+                <td>salesforce</td>
+            </tr>
+        
+            <tr>
+                <td>2026-10-28 13:30</td>
+                <td>OPP-010</td>
+                <td>shared field</td>
+                <td>auto correct</td>
+                <td>salesforce</td>
+            </tr>
+        
+            <tr>
+                <td>2026-10-28 13:30</td>
+                <td>OPP-011</td>
+                <td>owned field</td>
+                <td>auto correct</td>
+                <td>salesforce</td>
+            </tr>
+        
+            <tr>
+                <td>2026-10-28 13:30</td>
+                <td>OPP-012</td>
+                <td>missing record</td>
+                <td>flag</td>
+                <td>—</td>
+            </tr>
+        
+            <tr>
+                <td>2026-10-28 13:30</td>
+                <td>OPP-013</td>
+                <td>contract gap</td>
+                <td>flag</td>
+                <td>—</td>
+            </tr>
+        </tbody>
+        </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  This page is a demo artifact. In production, each surface lives where its reader already works — Slack for the team, Salesforce for the resolution path, the audit log for anyone asking "when did this change and why." Nothing new to adopt.
+</footer>
+
+</div>
+</body>
+</html>

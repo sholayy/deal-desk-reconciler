@@ -1,0 +1,15 @@
+opportunity_id,customer_name,contract_value_usd,commercial_approval_status,opportunity_owner,stage,last_modified_ts,handoff_submitted,sf_record_id
+OPP-001,Northwind Technologies Inc.,250000,Approved,Priya Shah,Handoff,2026-10-20T14:30:00Z,true,0066g00000MOCK01
+OPP-002,Riverside Health,420000,Approved,Jordan Kim,Handoff,2026-10-18T09:15:00Z,true,0066g00000MOCK02
+OPP-003,Beacon Analytics,180000,Approved,Marcus Chen,Handoff,2026-10-21T11:00:00Z,true,0066g00000MOCK03
+OPP-004,Vista Logistics,615000,Approved,Priya Shah,Handoff,2026-10-15T16:45:00Z,true,0066g00000MOCK04
+OPP-005,Harbor Financial Group,890000,Approved,Elena Rodriguez,Handoff,2026-10-19T10:20:00Z,true,0066g00000MOCK05
+OPP-006,Cedar Mountain Co-op,145000,Approved,Jordan Kim,Handoff,2026-10-22T08:30:00Z,true,0066g00000MOCK06
+OPP-007,Lakeside Media,320000,Approved,Marcus Chen,Handoff,2026-10-17T13:00:00Z,true,0066g00000MOCK07
+OPP-008,Summit Robotics,275000,Approved,Priya Shah,Handoff,2026-10-20T15:00:00Z,true,0066g00000MOCK08
+OPP-010,Delta Research Labs,480000,Approved,Elena Rodriguez,Handoff,2026-10-26T10:00:00Z,true,0066g00000MOCK10
+OPP-011,Northwind Technologies Inc.,340000,Approved,Priya Shah,Handoff,2026-10-27T09:00:00Z,true,0066g00000MOCK11
+OPP-012,Atlas Freight Services,560000,Approved,Marcus Chen,Approved,2026-10-23T14:00:00Z,true,0066g00000MOCK12
+OPP-013,Meridian Energy,720000,Approved,Elena Rodriguez,Handoff,2026-10-21T11:30:00Z,true,0066g00000MOCK13
+OPP-014,Juniper Software,250000,Approved,Jordan Kim,Handoff,2026-10-28T10:40:00Z,true,0066g00000MOCK14
+OPP-015,Pacific Dental Group,195000,Approved,Priya Shah,Handoff,2026-10-28T10:45:00Z,true,0066g00000MOCK15

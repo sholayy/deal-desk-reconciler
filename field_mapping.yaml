@@ -1,0 +1,81 @@
+# Field mapping between Salesforce and Mission Control exports.
+# The SOP (contracts.md) defines concepts. This file maps each concept
+# to the actual column name in each system's export.
+#
+# When a system renames a field, update it here. The SOP does not change.
+# Last updated: 2026-10-28
+
+# -------------------------------------------------------------------
+# Shared key — the ID columns used to join records across systems
+# -------------------------------------------------------------------
+
+shared_key:
+  salesforce: opportunity_id
+  mission_control: mc_project_id
+  mc_prefix: "MC-"
+  # Mission Control IDs are formatted as "MC-" + the Salesforce ID.
+  # The reconciliation strips this prefix before joining.
+
+# -------------------------------------------------------------------
+# Timestamp fields — used by the recency rule
+# -------------------------------------------------------------------
+
+timestamps:
+  salesforce: last_modified_ts
+  mission_control: updated_at
+
+# -------------------------------------------------------------------
+# Concept-to-column mapping
+# Each concept name matches a field defined in contract.yaml.
+# For fields present in only one system, the other side is null.
+# -------------------------------------------------------------------
+
+concepts:
+
+  customer_name:
+    salesforce: customer_name
+    mission_control: account
+
+  commercial_approval_status:
+    salesforce: commercial_approval_status
+    mission_control: null
+
+  opportunity_owner:
+    salesforce: opportunity_owner
+    mission_control: commercial_contact
+
+  stage:
+    salesforce: stage
+    mission_control: null
+
+  delivery_squad:
+    salesforce: null
+    mission_control: delivery_squad
+
+  kickoff_date:
+    salesforce: null
+    mission_control: kickoff_date
+
+  project_status:
+    salesforce: null
+    mission_control: project_status
+
+  program_lead:
+    salesforce: null
+    mission_control: program_lead
+
+  contract_value:
+    salesforce: contract_value_usd
+    mission_control: engagement_value
+
+# -------------------------------------------------------------------
+# Contract gap fields — flagged, not reconciled
+# These are listed here so the code knows to flag disagreements
+# but will not auto-correct them. Remove when the SOP resolves the gap.
+# -------------------------------------------------------------------
+
+contract_gap_fields:
+
+  handoff_flag:
+    salesforce: handoff_submitted
+    mission_control: handoff_received

@@ -1,0 +1,12 @@
+*Deal Desk reconciliation — Wednesday Oct 28*
+
+2 opportunities need attention.
+
+*<https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK12/view|OPP-012>* — Missing Mission Control record. Record present in salesforce only; missing from mission_control. Runbook: Missing Mission Control record.
+
+*<https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK13/view|OPP-013>* — handoff_flag fields disagree between systems. SOP does not name an owner. Runbook: Contract gap.
+
+3 silent corrections also applied.
+(2 held below persistence threshold.)
+
+Weekly rollup: output/slack/weekly_2026-10-28.txt

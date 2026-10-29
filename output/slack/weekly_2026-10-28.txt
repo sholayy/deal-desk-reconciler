@@ -1,0 +1,14 @@
+*Deal Desk reconciliation — weekly rollup: Week ending Wednesday Oct 28*
+
+14 discrepancies this week. 6 auto-corrected, 4 flagged, 4 held below threshold.
+
+*Fields drifting most (recency corrections):*
+  • contract_value: 2 corrections
+
+_Pattern worth watching: contract_value drifted 2 times this week. Likely an upstream process gap — raise in next ops sync._
+
+*Contract gaps surfaced this week (SOP needs decisions):*
+  • handoff_flag
+
+Full log: output/reconciliation_log.json
+Runbook: runbook.md

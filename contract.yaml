@@ -1,0 +1,115 @@
+# Deal Desk SOP — machine-readable version.
+# This file mirrors contracts.md. If one changes, the other changes too.
+# Last updated: 2026-10-28
+
+# -------------------------------------------------------------------
+# Shared key — how records are joined across the two systems
+# -------------------------------------------------------------------
+
+shared_key:
+  salesforce: opportunity_id
+  mission_control: mc_project_id
+  # Mission Control IDs are formatted as "MC-" + the Salesforce ID.
+
+# -------------------------------------------------------------------
+# Persistence threshold — the minimum age of a change before action
+# -------------------------------------------------------------------
+
+persistence_threshold_hours: 4
+# Rationale: data entered minutes ago may not have propagated yet.
+# Acting on it would create false corrections. Reviewed quarterly.
+
+# -------------------------------------------------------------------
+# Field ownership rules
+# Each entry names: the concept, which system owns it, the rule,
+# and the one-line why.
+# -------------------------------------------------------------------
+
+fields:
+
+  customer_name:
+    owner: salesforce
+    rule: ownership
+    reason: Commercial record is the legal entity source.
+
+  commercial_approval_status:
+    owner: salesforce
+    rule: ownership
+    reason: Deal Desk approval decision; Mission Control does not touch this.
+    salesforce_only: true
+
+  opportunity_owner:
+    owner: salesforce
+    rule: ownership
+    reason: GTM owner is set in Salesforce and governed by Sales management.
+
+  stage:
+    owner: salesforce
+    rule: ownership
+    reason: Commercial lifecycle stage; Mission Control does not represent this.
+    salesforce_only: true
+
+  delivery_squad:
+    owner: mission_control
+    rule: ownership
+    reason: EPM assigns delivery resourcing.
+    mission_control_only: true
+
+  kickoff_date:
+    owner: mission_control
+    rule: ownership
+    reason: Delivery start is set by EPM at planning.
+    mission_control_only: true
+
+  project_status:
+    owner: mission_control
+    rule: ownership
+    reason: Operational state of the engagement, owned by Delivery.
+    mission_control_only: true
+
+  program_lead:
+    owner: mission_control
+    rule: ownership
+    reason: Named EPM responsible for the engagement.
+    mission_control_only: true
+
+  contract_value:
+    owner: shared
+    rule: recency
+    reason: AE may renegotiate post-approval; the more recent value is the current truth.
+
+# -------------------------------------------------------------------
+# Contract gaps — known unresolved cases.
+# These are flagged, never auto-resolved.
+# When resolved in a Deal Desk ops sync, promote the field above
+# and remove it from this section.
+# -------------------------------------------------------------------
+
+contract_gaps:
+
+  handoff_flag:
+    salesforce_field: handoff_submitted
+    mission_control_field: handoff_received
+    reason: >
+      Named similarly but mean different things. Salesforce indicates the
+      commercial side has pushed the handoff; Mission Control indicates the
+      delivery team has acknowledged receipt. The SOP has not decided whether
+      these should be mirrored or kept separate. Flag until resolved.
+# -------------------------------------------------------------------
+# Simulated run time — for demo/testing reproducibility
+# -------------------------------------------------------------------
+
+simulated_now: "2026-10-28T13:30:00Z"
+# When set, the reconciliation uses this timestamp as "now" instead of
+# the actual wall clock. This keeps demos reproducible and keeps the
+# persistence threshold tests meaningful. In production this would be
+# unset (null) and the real wall clock would apply.
+# -------------------------------------------------------------------
+# Salesforce base URL — for building record links in Slack messages
+# -------------------------------------------------------------------
+
+salesforce_base_url: "https://cohere-demo.lightning.force.com/lightning/r/Opportunity"
+# When set, Slack messages render opportunity IDs as clickable Salesforce
+# record links. Set to null to show plain IDs. In production this points
+# at the real Salesforce org; here it points at a demo URL so the links
+# look real in the walkthrough.
