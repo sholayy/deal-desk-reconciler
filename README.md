@@ -2,6 +2,8 @@
 
 A small reconciliation engine for two systems that don't talk to each other — with an SOP, a human escape hatch, and a bias toward silence.
 
+**→ [Live dashboard](https://sholayy.github.io/deal-desk-reconciler/output/dashboard.html)** &nbsp;·&nbsp; produced by one run of `python3 reconcile.py` against the mock exports in `/data/`.
+
 ## The problem
 
 Deal Desk sits between a commercial system (Salesforce) and a delivery system (Mission Control). Both hold records about the same opportunities. Neither pushes updates to the other. Over time they drift, and nobody notices until a delivery team starts work on the wrong contract value or a VP looks at a report that doesn't match what's live.
