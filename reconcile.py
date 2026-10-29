@@ -192,6 +192,42 @@ def classify_discrepancies(joined, contract, mapping):
                 if row["presence"] == "salesforce_only"
                 else "salesforce"
             )
+            present_in = row["presence"].replace("_only", "")
+
+            # Apply the same persistence threshold to missing records as to
+            # field discrepancies. A record created five minutes ago in
+            # Salesforce has not had time to open its Mission Control
+            # counterpart. Flagging immediately produces noise. Use the
+            # existing side's last_modified_ts as the age reference.
+            ts_col = (
+                "last_modified_ts_sf"
+                if row["presence"] == "salesforce_only"
+                else "last_modified_ts_mc"
+            )
+            existing_ts_raw = row.get(ts_col)
+            if pd.notna(existing_ts_raw):
+                existing_ts = date_parser.parse(str(existing_ts_raw))
+                age_hours = (RUN_TIMESTAMP - existing_ts).total_seconds() / 3600
+                if age_hours < threshold_hours:
+                    discrepancies.append({
+                        "opportunity_id": opp_id,
+                        "sf_record_id": row.get("sf_record_id"),
+                        "concept": None,
+                        "sf_value": None,
+                        "mc_value": None,
+                        "bucket": "below_threshold",
+                        "rule_applied": "none",
+                        "action": "hold",
+                        "winning_system": None,
+                        "reason": (
+                            f"Record present in {present_in} only "
+                            f"({age_hours:.1f}h old); below {threshold_hours}h "
+                            f"persistence threshold. Counterpart in {missing_from} "
+                            f"may not have been opened yet."
+                        ),
+                    })
+                    continue
+
             discrepancies.append({
                 "opportunity_id": opp_id,
                 "sf_record_id": row.get("sf_record_id"),
@@ -202,7 +238,7 @@ def classify_discrepancies(joined, contract, mapping):
                 "rule_applied": "none",
                 "action": "flag",
                 "winning_system": None,
-                "reason": f"Record present in {row['presence'].replace('_only', '')} only; missing from {missing_from}.",
+                "reason": f"Record present in {present_in} only; missing from {missing_from}.",
             })
             continue
 
