@@ -487,6 +487,59 @@ def _h(value):
     return escape(str(value), quote=True)
 
 
+def _format_concept_name(concept):
+    """snake_case -> Title Case for display. 'contract_value' -> 'Contract Value'."""
+    if concept is None:
+        return "—"
+    return str(concept).replace("_", " ").title()
+
+
+# Fields that should display as currency. Add to this set as the SOP grows.
+_CURRENCY_FIELDS = {"contract_value"}
+
+
+def _format_value_for_display(concept, value):
+    """Format a value for display in the dashboard. Money fields get $ and commas."""
+    if value is None:
+        return "—"
+    if pd.isna(value) if not isinstance(value, (list, dict)) else False:
+        return "—"
+    if concept in _CURRENCY_FIELDS:
+        try:
+            # Numeric cast handles both "500000.0" strings and raw floats.
+            amount = float(value)
+            return f"${amount:,.0f}"
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def _held_eligibility_line(reason, run_timestamp, threshold_hours=4):
+    """
+    Reads 'Most recent change X.Yh ago; below ...' and returns a human-readable
+    eligibility line: 'Eligible for action at HH:MM UTC (in Xh Ym).'
+    Falls back to the raw reason if parsing fails.
+    """
+    import re
+    from datetime import timedelta
+    match = re.search(r"([\d.]+)h ago", reason or "")
+    if not match:
+        return reason
+    try:
+        age_hours = float(match.group(1))
+        remaining = threshold_hours - age_hours
+        eligible_at = run_timestamp + timedelta(hours=remaining)
+        hours_remaining = int(remaining)
+        minutes_remaining = int((remaining - hours_remaining) * 60)
+        if hours_remaining > 0:
+            countdown = f"in {hours_remaining}h {minutes_remaining}m"
+        else:
+            countdown = f"in {minutes_remaining}m"
+        return f"Eligible for action at {eligible_at.strftime('%H:%M')} UTC ({countdown})."
+    except (ValueError, TypeError):
+        return reason
+
+
 def emit_dashboard():
     """
     Writes a single HTML dashboard combining:
@@ -524,6 +577,10 @@ def emit_dashboard():
 
     unique_flagged_opps = len({e["opportunity_id"] for e in flags})
 
+    # Threshold from contract (hardcoded here for simplicity; a mature build
+    # would pass this in from load_data).
+    threshold = 4
+
     # ---------- Flag cards ----------
     def _render_flag_card(f):
         customer = opp_customer.get(f["opportunity_id"], "")
@@ -537,7 +594,7 @@ def emit_dashboard():
             action = "Confirm the engagement is still active, then open the delivery record."
             runbook = "Missing Mission Control record"
         else:
-            title = f"Policy gap: {_h(f['concept'])}"
+            title = f"Policy gap: {_h(_format_concept_name(f['concept']))}"
             action = "SOP has not named an owner for this field. Decide and update contract.yaml."
             runbook = "Contract gap"
         return f"""
@@ -566,24 +623,26 @@ def emit_dashboard():
             was_value, now_value = d["sf_value"], d["mc_value"]
             was_source, now_source = "Salesforce", "Mission Control"
         rule_label = "Ownership rule" if d["rule_applied"] == "ownership" else "Recency rule"
+        was_display = _format_value_for_display(d["concept"], was_value)
+        now_display = _format_value_for_display(d["concept"], now_value)
         return f"""
         <article class="card card-decision">
           <div class="card-top">
             <div>
               <div class="card-eyebrow">{_h(d['opportunity_id'])} · {_h(customer)}</div>
-              <h3 class="card-title">{_h(d['concept'])}</h3>
+              <h3 class="card-title">{_h(_format_concept_name(d['concept']))}</h3>
             </div>
             <span class="pill pill-decision">{_h(rule_label)}</span>
           </div>
           <div class="values">
             <div class="values-col values-was">
               <small>Current · {_h(was_source)}</small>
-              <div class="values-text">{_h(was_value)}</div>
+              <div class="values-text">{_h(was_display)}</div>
             </div>
             <span class="values-arrow">→</span>
             <div class="values-col values-now">
               <small>Proposed · {_h(now_source)}</small>
-              <div class="values-text">{_h(now_value)}</div>
+              <div class="values-text">{_h(now_display)}</div>
             </div>
           </div>
           <p class="card-meta"><em>{_h(d['reason'])}</em></p>
@@ -595,16 +654,17 @@ def emit_dashboard():
     # ---------- Held cards (small) ----------
     def _render_held_card(h):
         customer = opp_customer.get(h["opportunity_id"], "")
+        eligibility = _held_eligibility_line(h["reason"], RUN_TIMESTAMP, threshold_hours=threshold)
         return f"""
         <div class="card card-held">
           <div class="card-top">
             <div>
               <div class="card-eyebrow">{_h(h['opportunity_id'])} · {_h(customer)}</div>
-              <h3 class="card-title">{_h(h['concept'])}</h3>
+              <h3 class="card-title">{_h(_format_concept_name(h['concept']))}</h3>
             </div>
             <span class="pill pill-held">Held</span>
           </div>
-          <p class="card-meta">{_h(h['reason'])}</p>
+          <p class="card-meta">{_h(eligibility)}</p>
         </div>
         """
 
@@ -631,9 +691,6 @@ def emit_dashboard():
 
     sf_table = _render_data_table(sf_df, "opportunity_id")
     mc_table = _render_data_table(mc_df, "mc_project_id")
-
-    # ---------- Decision policy sidebar ----------
-    threshold = 4  # pulled from contract in a mature build; hardcoded here for simplicity
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
