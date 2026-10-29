@@ -514,6 +514,34 @@ def _format_value_for_display(concept, value):
     return str(value)
 
 
+def _variance_line(concept, current, proposed):
+    """
+    For monetary fields, show the size of the proposed correction so a
+    reviewer sees whether it is material. Returns markup for a single
+    muted line below the before/after block, e.g. 'Decrease $20,000 (-4%)'.
+    Returns empty string for non-currency fields or unparseable values.
+    """
+    if concept not in _CURRENCY_FIELDS:
+        return ""
+    try:
+        before = float(current)
+        after = float(proposed)
+    except (TypeError, ValueError):
+        return ""
+    delta = after - before
+    if delta == 0:
+        return ""
+    direction = "Increase" if delta > 0 else "Decrease"
+    abs_delta = f"${abs(delta):,.0f}"
+    percent = ""
+    if before:
+        pct = delta / before * 100
+        # Drop the decimal when it rounds cleanly, keep one otherwise.
+        pct_str = f"{pct:+.0f}" if abs(pct - round(pct)) < 0.05 else f"{pct:+.1f}"
+        percent = f" ({pct_str}%)"
+    return f'<p class="variance">{direction} {abs_delta}{percent}</p>'
+
+
 def _held_eligibility_line(reason, run_timestamp, threshold_hours=4):
     """
     Reads 'Most recent change X.Yh ago; below ...' and returns a human-readable
@@ -577,9 +605,11 @@ def emit_dashboard():
 
     unique_flagged_opps = len({e["opportunity_id"] for e in flags})
 
-    # Threshold from contract (hardcoded here for simplicity; a mature build
-    # would pass this in from load_data).
-    threshold = 4
+    # Read the stabilization window from the SOP so a change in contract.yaml
+    # flows through to every surface — dashboard header, policy sidebar,
+    # held-item caption, eligibility countdown — without touching the engine.
+    with open(CONTRACT_YAML, "r") as f:
+        threshold = yaml.safe_load(f)["persistence_threshold_hours"]
 
     # ---------- Flag cards ----------
     def _render_flag_card(f):
@@ -625,6 +655,7 @@ def emit_dashboard():
         rule_label = "Ownership rule" if d["rule_applied"] == "ownership" else "Recency rule"
         was_display = _format_value_for_display(d["concept"], was_value)
         now_display = _format_value_for_display(d["concept"], now_value)
+        variance_html = _variance_line(d["concept"], was_value, now_value)
         return f"""
         <article class="card card-decision">
           <div class="card-top">
@@ -645,6 +676,7 @@ def emit_dashboard():
               <div class="values-text">{_h(now_display)}</div>
             </div>
           </div>
+          {variance_html}
           <p class="card-meta"><em>{_h(d['reason'])}</em></p>
         </article>
         """
@@ -836,6 +868,7 @@ def emit_dashboard():
   .values-text {{ font-weight: 600; word-break: break-word; }}
   .values-was .values-text {{ color: var(--muted); text-decoration: line-through; text-decoration-color: var(--subtle); }}
   .values-arrow {{ color: var(--subtle); font-size: 16px; }}
+  .variance {{ margin: 8px 0 0; font-size: 12px; color: var(--blue-text); font-weight: 600; }}
   .empty {{
     padding: 24px;
     text-align: center;
