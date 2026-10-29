@@ -2,7 +2,7 @@
 
 2 opportunities need attention (2 flagged discrepancies).
 
-*<https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK12/view|OPP-012>* — Missing Mission Control record. Record present in salesforce only; missing from mission_control. Runbook: Missing Mission Control record.
+*<https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK12/view|OPP-012>* — Missing Mission Control record. Record present in salesforce only; missing from mission_control. Runbook: Missing record.
 
 *<https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK13/view|OPP-013>* — handoff_flag fields disagree between systems. SOP does not name an owner. Runbook: Contract gap.
 
