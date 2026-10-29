@@ -88,10 +88,10 @@
   <h1>Deal Desk Reconciliation</h1>
   <div class="subtitle">Run of 2026-10-28 · showing today's state</div>
   <div class="stats">
-    <div><div class="stat-num">6</div><div class="stat-label">Auto-corrections</div></div>
-    <div><div class="stat-num">4</div><div class="stat-label">Flagged for action</div></div>
-    <div><div class="stat-num">4</div><div class="stat-label">Held below threshold</div></div>
-    <div><div class="stat-num">14</div><div class="stat-label">Total discrepancies</div></div>
+    <div><div class="stat-num">3</div><div class="stat-label">Auto-corrections</div></div>
+    <div><div class="stat-num">2</div><div class="stat-label">Flagged for action</div></div>
+    <div><div class="stat-num">2</div><div class="stat-label">Held below threshold</div></div>
+    <div><div class="stat-num">7</div><div class="stat-label">Total discrepancies</div></div>
   </div>
 </header>
 
@@ -190,70 +190,6 @@
                 <td>hold</td>
                 <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
             </tr>
-        
-            <tr class="action-correct">
-                <td><strong>OPP-008</strong></td>
-                <td>opportunity_owner</td>
-                <td>owned field</td>
-                <td>ownership</td>
-                <td>auto correct</td>
-                <td class="reason">GTM owner is set in Salesforce and governed by Sales management.</td>
-            </tr>
-        
-            <tr class="action-correct">
-                <td><strong>OPP-010</strong></td>
-                <td>contract_value</td>
-                <td>shared field</td>
-                <td>recency</td>
-                <td>auto correct</td>
-                <td class="reason">AE may renegotiate post-approval; the more recent value is the current truth.</td>
-            </tr>
-        
-            <tr class="action-correct">
-                <td><strong>OPP-011</strong></td>
-                <td>customer_name</td>
-                <td>owned field</td>
-                <td>ownership</td>
-                <td>auto correct</td>
-                <td class="reason">Commercial record is the legal entity source.</td>
-            </tr>
-        
-            <tr class="action-flag">
-                <td><strong>OPP-012</strong></td>
-                <td>—</td>
-                <td>missing record</td>
-                <td>none</td>
-                <td>flag</td>
-                <td class="reason">Record present in salesforce only; missing from mission_control.</td>
-            </tr>
-        
-            <tr class="action-flag">
-                <td><strong>OPP-013</strong></td>
-                <td>handoff_flag</td>
-                <td>contract gap</td>
-                <td>none</td>
-                <td>flag</td>
-                <td class="reason">Named similarly but mean different things. Salesforce indicates the commercial side has pushed the handoff; Mission Control indicates the delivery team has acknowledged receipt. The SOP has not decided whether these should be mirrored or kept separate. Flag until resolved.
-</td>
-            </tr>
-        
-            <tr class="action-hold">
-                <td><strong>OPP-014</strong></td>
-                <td>contract_value</td>
-                <td>below threshold</td>
-                <td>none</td>
-                <td>hold</td>
-                <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
-            </tr>
-        
-            <tr class="action-hold">
-                <td><strong>OPP-015</strong></td>
-                <td>opportunity_owner</td>
-                <td>below threshold</td>
-                <td>none</td>
-                <td>hold</td>
-                <td class="reason">Most recent change 2.8h ago; below 4h persistence threshold.</td>
-            </tr>
         </tbody>
         </table>
     </div>
@@ -270,7 +206,7 @@
     </div>
     <div class="panel">
       <div class="panel-head">Weekly rollup</div>
-      <div class="panel-body slack-render"><strong>Deal Desk reconciliation — weekly rollup: Week ending Wednesday Oct 28</strong><br><br>14 discrepancies this week. 6 auto-corrected, 4 flagged, 4 held below threshold.<br><br><strong>Fields drifting most (recency corrections):</strong><br>  • contract<em>value: 2 corrections<br><br></em>Pattern worth watching: contract<em>value drifted 2 times this week. Likely an upstream process gap — raise in next ops sync.</em><br><br><strong>Contract gaps surfaced this week (SOP needs decisions):</strong><br>  • handoff<em>flag<br><br>Full log: output/reconciliation</em>log.json<br>Runbook: runbook.md</div>
+      <div class="panel-body slack-render"><strong>Deal Desk reconciliation — weekly rollup: Week ending Wednesday Oct 28</strong><br><br>7 discrepancies this week. 3 auto-corrected, 2 flagged, 2 held below threshold.<br><br><strong>Fields drifting most (recency corrections):</strong><br>  • contract<em>value: 1 correction<br><br><strong>Contract gaps surfaced this week (SOP needs decisions):</strong><br>  • handoff</em>flag<br><br>Full log: output/reconciliation_log.json<br>Runbook: runbook.md</div>
     </div>
   </div>
   <div class="panel" style="margin-top: 1rem;">

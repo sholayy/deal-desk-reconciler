@@ -585,7 +585,7 @@ def emit_dashboard():
     def _slack_to_html(text):
         text = re.sub(r"<([^|]+)\|([^>]+)>", r"\2", text)  # unwrap links to label text
         text = re.sub(r"\*([^*]+)\*", r"<strong>\1</strong>", text)  # bold
-        text = re.sub(r"_([^_]+)_", r"<em>\1</em>", text)  # italic
+        text = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"<em>\1</em>", text)  # italic (only when not inside words)
         return text.replace("\n", "<br>")
 
     daily_html = _slack_to_html(daily_slack)
