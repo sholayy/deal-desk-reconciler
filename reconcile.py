@@ -7,12 +7,17 @@ Reads daily exports from Salesforce and Mission Control, applies the SOP
   - An HTML dashboard (output/dashboard.html)
   - An append-only JSON audit log (output/reconciliation_log.json)
 
+The engine proposes corrections based on the SOP; it does not currently
+write back to either source system. See README for the full roadmap.
+
 Run: python reconcile.py
 """
 
 import json
 import os
+import uuid
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 
 import pandas as pd
@@ -42,27 +47,37 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 SLACK_DIR.mkdir(exist_ok=True)
 
 # -------------------------------------------------------------------
-# Run metadata — today's date drives the Slack filename and log entries.
+# Run metadata — timestamp, date, and a unique run_id so repeat
+# executions don't collide in the audit log or inflate the dashboard.
 # -------------------------------------------------------------------
 
 RUN_TIMESTAMP = None
 RUN_DATE_STR = None
+RUN_ID = None
+
+
 def _set_run_timestamp(contract):
-    """Sets the global run timestamp, using simulated_now if configured."""
-    global RUN_TIMESTAMP, RUN_DATE_STR
+    """Sets the global run timestamp and a unique run ID."""
+    global RUN_TIMESTAMP, RUN_DATE_STR, RUN_ID
     simulated = contract.get("simulated_now")
     if simulated:
         RUN_TIMESTAMP = date_parser.parse(simulated)
     else:
         RUN_TIMESTAMP = datetime.now(timezone.utc)
     RUN_DATE_STR = RUN_TIMESTAMP.strftime("%Y-%m-%d")
+    RUN_ID = str(uuid.uuid4())
 
 
 def _set_salesforce_base_url(contract):
     """Sets the module-level Salesforce base URL from config."""
     global _SF_BASE_URL
     _SF_BASE_URL = contract.get("salesforce_base_url")
+
+
 # -------------------------------------------------------------------
+# Load — reads inputs and returns everything the engine needs.
+# -------------------------------------------------------------------
+
 def load_data():
     """
     Reads the two CSV exports and the two YAML configs.
@@ -70,44 +85,29 @@ def load_data():
     Applies the field mapping so Mission Control columns are renamed to
     the SOP's concept names. From this point onwards, both dataframes
     speak the same vocabulary.
-
-    Returns a dict with:
-      - sf_df: Salesforce dataframe, columns renamed to concept names
-      - mc_df: Mission Control dataframe, columns renamed to concept names
-      - contract: parsed contract.yaml as a dict
-      - mapping: parsed field_mapping.yaml as a dict
     """
 
-    # Load the configs first — if these are broken, nothing else matters.
     with open(CONTRACT_YAML, "r") as f:
         contract = yaml.safe_load(f)
 
     with open(FIELD_MAPPING_YAML, "r") as f:
         mapping = yaml.safe_load(f)
 
-    # Load both CSVs.
     sf_df = pd.read_csv(SALESFORCE_CSV)
     mc_df = pd.read_csv(MISSION_CONTROL_CSV)
 
-    # Strip the "MC-" prefix from Mission Control IDs so the join works.
     mc_prefix = mapping["shared_key"]["mc_prefix"]
     mc_id_col = mapping["shared_key"]["mission_control"]
     mc_df[mc_id_col] = mc_df[mc_id_col].str.replace(mc_prefix, "", regex=False)
 
-    # Rename the Mission Control ID column to match Salesforce so the join
-    # has a single column name to work with.
     sf_id_col = mapping["shared_key"]["salesforce"]
     mc_df = mc_df.rename(columns={mc_id_col: sf_id_col})
 
-    # Rename Mission Control's timestamp column to a single shared name.
     sf_ts_col = mapping["timestamps"]["salesforce"]
     mc_ts_col = mapping["timestamps"]["mission_control"]
     mc_df = mc_df.rename(columns={mc_ts_col: f"{sf_ts_col}_mc"})
     sf_df = sf_df.rename(columns={sf_ts_col: f"{sf_ts_col}_sf"})
 
-    # Rename every mapped concept field so both dataframes speak the same
-    # vocabulary from here on. We suffix with _sf and _mc so we can tell
-    # which value came from which system after the join.
     concept_rename_sf = {}
     concept_rename_mc = {}
 
@@ -120,7 +120,6 @@ def load_data():
     sf_df = sf_df.rename(columns=concept_rename_sf)
     mc_df = mc_df.rename(columns=concept_rename_mc)
 
-    # Same treatment for the contract gap fields.
     for gap_name, cols in mapping.get("contract_gap_fields", {}).items():
         if cols["salesforce"] is not None:
             sf_df = sf_df.rename(columns={cols["salesforce"]: f"{gap_name}_sf"})
@@ -134,6 +133,7 @@ def load_data():
         "mapping": mapping,
     }
 
+
 # -------------------------------------------------------------------
 # Join — merges the two dataframes on opportunity_id so every opportunity
 # has both its Salesforce and Mission Control values side by side.
@@ -143,27 +143,14 @@ def join_records(sf_df, mc_df, shared_key_col):
     """
     Outer-joins the two dataframes on the shared ID column.
 
-    Outer join is deliberate: records present in only one system
-    must survive the join so the classification step can flag them.
-    An inner join would silently drop missing records, which is
-    the exact failure mode this system exists to prevent.
-
-    Returns a single dataframe where each row has both the _sf and
-    _mc version of every mapped field. NaN on either side indicates
-    the record is missing in that system.
+    Outer join is deliberate: records present in only one system must
+    survive the join so the classification step can flag them.
     """
 
     joined = pd.merge(
-        sf_df,
-        mc_df,
-        on=shared_key_col,
-        how="outer",
-        indicator=True,
+        sf_df, mc_df, on=shared_key_col, how="outer", indicator=True,
     )
 
-    # `_merge` is a pandas-provided column that tells us which side
-    # each row came from: 'both', 'left_only' (SF only), 'right_only' (MC only).
-    # We rename it to something more meaningful for downstream code.
     joined = joined.rename(columns={"_merge": "presence"})
     joined["presence"] = joined["presence"].map({
         "both": "both",
@@ -172,30 +159,25 @@ def join_records(sf_df, mc_df, shared_key_col):
     })
 
     return joined
+
+
 # -------------------------------------------------------------------
 # Classify — walks every joined row and classifies every disagreement
 # into one of the four buckets from the SOP.
+#
+# IMPORTANT: this step produces decisions, not writes. The 'auto_correct'
+# action means the SOP authorizes correction; it does NOT mean Salesforce
+# or Mission Control has been updated. The write-back layer is the next
+# engineering step (see README).
 # -------------------------------------------------------------------
 
 def classify_discrepancies(joined, contract, mapping):
     """
-    For each joined row, inspects every mapped concept field and
-    returns a list of classified discrepancies.
+    For each joined row, inspects every mapped concept field and returns
+    a list of classified discrepancies.
 
-    Each discrepancy carries:
-      - opportunity_id
-      - concept: the SOP field name
-      - sf_value: Salesforce value
-      - mc_value: Mission Control value
-      - bucket: one of 'owned_field', 'shared_field', 'missing_record',
-                'contract_gap', 'below_threshold'
-      - rule_applied: 'ownership' | 'recency' | 'none'
-      - action: 'auto_correct' | 'flag' | 'hold'
-      - winning_system: for auto-corrections, which system's value wins
-      - reason: the SOP's one-line rationale
-
-    Does not act on anything. Only classifies. Downstream functions
-    apply the actions and write the outputs.
+    Each discrepancy carries bucket, rule_applied, action, winning_system,
+    and the SOP's reason. 'action' is a DECISION, not an executed write.
     """
 
     discrepancies = []
@@ -204,10 +186,6 @@ def classify_discrepancies(joined, contract, mapping):
     for _, row in joined.iterrows():
         opp_id = row["opportunity_id"]
 
-        # ---------------------------------------------------------
-        # Bucket 3: missing record. Short-circuit the rest — no
-        # point comparing fields when half the record isn't there.
-        # ---------------------------------------------------------
         if row["presence"] != "both":
             missing_from = (
                 "mission_control"
@@ -228,33 +206,21 @@ def classify_discrepancies(joined, contract, mapping):
             })
             continue
 
-        # ---------------------------------------------------------
-        # Walk every mapped concept field.
-        # ---------------------------------------------------------
         for concept, field_rule in contract["fields"].items():
             sf_col = f"{concept}_sf"
             mc_col = f"{concept}_mc"
 
-            # Skip fields that only exist in one system — no comparison possible.
             if field_rule.get("salesforce_only") or field_rule.get("mission_control_only"):
                 continue
 
             sf_val = row.get(sf_col)
             mc_val = row.get(mc_col)
 
-            # If either side is missing the value entirely, skip —
-            # that's a data quality issue, not a reconciliation one.
             if pd.isna(sf_val) or pd.isna(mc_val):
                 continue
-
-            # Values agree — nothing to do.
             if sf_val == mc_val:
                 continue
 
-            # ---------------------------------------------------------
-            # Check persistence threshold. If the most recent update
-            # on either side is too recent, hold for next run.
-            # ---------------------------------------------------------
             sf_ts = date_parser.parse(row["last_modified_ts_sf"])
             mc_ts = date_parser.parse(row["last_modified_ts_mc"])
             most_recent = max(sf_ts, mc_ts)
@@ -263,6 +229,7 @@ def classify_discrepancies(joined, contract, mapping):
             if age_hours < threshold_hours:
                 discrepancies.append({
                     "opportunity_id": opp_id,
+                    "sf_record_id": row.get("sf_record_id"),
                     "concept": concept,
                     "sf_value": sf_val,
                     "mc_value": mc_val,
@@ -274,16 +241,11 @@ def classify_discrepancies(joined, contract, mapping):
                 })
                 continue
 
-            # ---------------------------------------------------------
-            # Bucket 1: owned field. The owner's value wins.
-            # ---------------------------------------------------------
             if field_rule["rule"] == "ownership":
                 owner = field_rule["owner"]
-                winning_value = sf_val if owner == "salesforce" else mc_val
-                losing_system = "mission_control" if owner == "salesforce" else "salesforce"
-
                 discrepancies.append({
                     "opportunity_id": opp_id,
+                    "sf_record_id": row.get("sf_record_id"),
                     "concept": concept,
                     "sf_value": sf_val,
                     "mc_value": mc_val,
@@ -294,14 +256,11 @@ def classify_discrepancies(joined, contract, mapping):
                     "reason": field_rule["reason"],
                 })
 
-            # ---------------------------------------------------------
-            # Bucket 2: shared field. Recency wins.
-            # ---------------------------------------------------------
             elif field_rule["rule"] == "recency":
                 winning_system = "salesforce" if sf_ts > mc_ts else "mission_control"
-
                 discrepancies.append({
                     "opportunity_id": opp_id,
+                    "sf_record_id": row.get("sf_record_id"),
                     "concept": concept,
                     "sf_value": sf_val,
                     "mc_value": mc_val,
@@ -312,20 +271,13 @@ def classify_discrepancies(joined, contract, mapping):
                     "reason": field_rule["reason"],
                 })
 
-        # ---------------------------------------------------------
-        # Bucket 4: contract gaps. Check every gap field, flag if
-        # the two systems disagree.
-        # ---------------------------------------------------------
         for gap_name, gap_fields in contract.get("contract_gaps", {}).items():
             sf_col = f"{gap_name}_sf"
             mc_col = f"{gap_name}_mc"
-
             sf_val = row.get(sf_col)
             mc_val = row.get(mc_col)
-
             if pd.isna(sf_val) or pd.isna(mc_val):
                 continue
-
             if sf_val != mc_val:
                 discrepancies.append({
                     "opportunity_id": opp_id,
@@ -341,28 +293,18 @@ def classify_discrepancies(joined, contract, mapping):
                 })
 
     return discrepancies
+
+
 # -------------------------------------------------------------------
 # Emit — writes the audit log (append-only) and the Slack message.
+# Language is "proposed" throughout, not "applied" — see classifier docstring.
 # -------------------------------------------------------------------
 
 def emit_outputs(discrepancies):
-    """
-    Writes two outputs for this run:
-      - Appends every discrepancy to reconciliation_log.json (audit trail)
-      - Writes a daily Slack message to output/slack/slack_YYYY-MM-DD.txt
-
-    The Slack message follows the templates defined in the SOP:
-      - Clean day: short status, no flags
-      - Flagged day: lead with flag count, then each flag with action
-    """
-
-    # ---------------------------------------------------------------
-    # Audit log — append every classified discrepancy as its own row.
-    # ---------------------------------------------------------------
-
     log_entries = []
     for d in discrepancies:
         log_entries.append({
+            "run_id": RUN_ID,
             "run_timestamp": RUN_TIMESTAMP.isoformat(),
             "run_date": RUN_DATE_STR,
             "opportunity_id": d["opportunity_id"],
@@ -376,42 +318,35 @@ def emit_outputs(discrepancies):
             "reason": d["reason"],
         })
 
-    # Load existing log if it exists, append new entries, write back.
     existing_log = []
     if AUDIT_LOG.exists():
         with open(AUDIT_LOG, "r") as f:
             existing_log = json.load(f)
-
     existing_log.extend(log_entries)
-
     with open(AUDIT_LOG, "w") as f:
         json.dump(existing_log, f, indent=2)
-
-    # ---------------------------------------------------------------
-    # Slack message — format based on what the engine saw this run.
-    # ---------------------------------------------------------------
 
     auto_corrections = [d for d in discrepancies if d["action"] == "auto_correct"]
     flags = [d for d in discrepancies if d["action"] == "flag"]
     held = [d for d in discrepancies if d["action"] == "hold"]
 
     date_header = RUN_TIMESTAMP.strftime("%A %b %-d")
-
     lines = [f"*Deal Desk reconciliation — {date_header}*", ""]
 
     if not flags:
-        # Clean-day template
-        total_compared = _count_opportunities_in_log(existing_log)
+        total_compared = _count_opportunities_in_current_run(existing_log)
         lines.append(
             f"{total_compared} opportunities compared. "
-            f"{len(auto_corrections)} silent corrections. "
+            f"{len(auto_corrections)} corrections proposed by rule. "
             f"Nothing needs attention."
         )
     else:
-        # Flagged-day template
-        lines.append(f"{len(flags)} {_pluralize('opportunity', 'opportunities', len(flags))} need attention.")
+        unique_flagged_opps = len({d["opportunity_id"] for d in flags})
+        lines.append(
+            f"{unique_flagged_opps} {_pluralize('opportunity', 'opportunities', unique_flagged_opps)} need attention "
+            f"({len(flags)} flagged discrepancies)."
+        )
         lines.append("")
-
         for flag in flags:
             opp_link = _build_opp_link(flag["opportunity_id"], flag.get("sf_record_id"))
             if flag["bucket"] == "missing_record":
@@ -425,9 +360,8 @@ def emit_outputs(discrepancies):
                     f"SOP does not name an owner. Runbook: Contract gap."
                 )
             lines.append("")
-
         if auto_corrections:
-            lines.append(f"{len(auto_corrections)} silent corrections also applied.")
+            lines.append(f"{len(auto_corrections)} corrections proposed by rule.")
 
     if held:
         lines.append(f"({len(held)} held below persistence threshold.)")
@@ -449,50 +383,47 @@ def emit_outputs(discrepancies):
 
 
 # -------------------------------------------------------------------
-# Weekly rollup — richer Slack message generated once a week.
-# Reads the audit log for the last 7 days and surfaces patterns.
+# Weekly rollup — dedupes to one run per day so repeated executions
+# don't inflate counts.
 # -------------------------------------------------------------------
 
 def emit_weekly_rollup():
-    """
-    Reads the last 7 days of audit log entries and generates a
-    weekly Slack rollup message. Covers:
-      - Count totals by bucket for the week
-      - Fields that drifted most often (recency corrections by field)
-      - Any contract gaps that stayed open across the week
-      - A short commentary line on what's trending
-
-    Writes to output/slack/weekly_YYYY-MM-DD.txt.
-    Only called on Monday runs in production; for the demo we always generate.
-    """
-
     if not AUDIT_LOG.exists():
         return None
-
     with open(AUDIT_LOG, "r") as f:
         log = json.load(f)
 
     from datetime import timedelta
     cutoff = RUN_TIMESTAMP - timedelta(days=7)
-    recent = [
+    all_recent = [
         e for e in log
         if date_parser.parse(e["run_timestamp"]) >= cutoff
     ]
+    if not all_recent:
+        return None
 
+    from collections import defaultdict
+    days = defaultdict(list)
+    for e in all_recent:
+        days[e["run_date"]].append(e)
+    latest_run_per_day = {}
+    for date, entries in days.items():
+        latest = max(entries, key=lambda e: e["run_timestamp"])
+        latest_run_per_day[date] = latest.get("run_id")
+    recent = [
+        e for e in all_recent
+        if e.get("run_id") == latest_run_per_day.get(e["run_date"])
+    ]
     if not recent:
         return None
 
     from collections import Counter
     bucket_counts = Counter(e["bucket"] for e in recent)
-
     recency_fields = Counter(
-        e["concept"] for e in recent
-        if e["rule_applied"] == "recency"
+        e["concept"] for e in recent if e["rule_applied"] == "recency"
     )
-
     gaps_this_week = set(
-        e["concept"] for e in recent
-        if e["bucket"] == "contract_gap"
+        e["concept"] for e in recent if e["bucket"] == "contract_gap"
     )
 
     week_header = RUN_TIMESTAMP.strftime("Week ending %A %b %-d")
@@ -503,17 +434,16 @@ def emit_weekly_rollup():
     flags = bucket_counts.get("missing_record", 0) + bucket_counts.get("contract_gap", 0)
     lines.append(
         f"{total} discrepancies this week. "
-        f"{corrections} auto-corrected, {flags} flagged, "
+        f"{corrections} corrections proposed by rule, {flags} flagged for review, "
         f"{bucket_counts.get('below_threshold', 0)} held below threshold."
     )
     lines.append("")
 
     if recency_fields:
-        lines.append("*Fields drifting most (recency corrections):*")
+        lines.append("*Fields drifting most (recency decisions):*")
         for field, count in recency_fields.most_common(3):
             lines.append(f"  • {field}: {count} {'correction' if count == 1 else 'corrections'}")
         lines.append("")
-
         top_field, top_count = recency_fields.most_common(1)[0]
         if top_count >= 2:
             lines.append(
@@ -541,15 +471,34 @@ def emit_weekly_rollup():
         "fields_drifting": dict(recency_fields),
         "gaps_open": list(gaps_this_week),
     }
+
+
+# -------------------------------------------------------------------
+# Dashboard — command-center style, single HTML file. Reads only the
+# current run's entries. All data-derived content is HTML-escaped.
+# -------------------------------------------------------------------
+
+def _h(value):
+    """HTML-escape any value for safe inclusion in generated markup."""
+    if value is None or (hasattr(value, "__len__") and len(str(value).strip()) == 0):
+        return "—"
+    if pd.isna(value) if not isinstance(value, (list, dict)) else False:
+        return "—"
+    return escape(str(value), quote=True)
+
+
 def emit_dashboard():
     """
-    Writes a command-center style HTML dashboard.
-    Structured as a Monday-morning briefing: action first, then what the
-    engine did, then supporting data on request.
-    """
+    Writes a single HTML dashboard combining:
+      - Hero band with four KPIs (opps in scope, needing review, decisions, held)
+      - Needs attention queue (flag cards with Salesforce links)
+      - Decisions proposed (correction cards with before/after values)
+      - Held while they stabilize (brief panel)
+      - Decision policy sidebar
+      - Raw system state (collapsed)
 
-    import re
-    from collections import Counter
+    No JavaScript, no CDNs, no hidden tabs. All content is visible on scroll.
+    """
 
     sf_df = pd.read_csv(SALESFORCE_CSV)
     mc_df = pd.read_csv(MISSION_CONTROL_CSV)
@@ -557,334 +506,441 @@ def emit_dashboard():
     with open(AUDIT_LOG, "r") as f:
         log = json.load(f)
 
-    todays_entries = [e for e in log if e["run_date"] == RUN_DATE_STR]
+    # Filter to only this run so repeat executions don't inflate counts.
+    todays_entries = [e for e in log if e.get("run_id") == RUN_ID]
 
-    # Lookups so we can show customer names and link to the actual Salesforce record.
     opp_customer = dict(zip(sf_df["opportunity_id"], sf_df["customer_name"]))
     opp_sf_record = dict(zip(sf_df["opportunity_id"], sf_df["sf_record_id"]))
 
-    auto_corrections = [e for e in todays_entries if e["action"] == "auto_correct"]
     flags = [e for e in todays_entries if e["action"] == "flag"]
+    decisions = [e for e in todays_entries if e["action"] == "auto_correct"]
     held = [e for e in todays_entries if e["action"] == "hold"]
 
-    # ---------- Status band ----------
-    status_parts = []
-    if flags:
-        status_parts.append(f"<strong>{len(flags)} need attention</strong>")
-    if auto_corrections:
-        status_parts.append(f"{len(auto_corrections)} corrected silently")
-    if held:
-        status_parts.append(f"{len(held)} held while they stabilize")
-    status_line = " · ".join(status_parts) if status_parts else "No activity today."
+    # Denominator: unique opportunities across both systems. Lets the reader
+    # see the quiet 90%, not just the exceptions.
+    all_sf_ids = set(sf_df["opportunity_id"].dropna().astype(str))
+    all_mc_ids = set(mc_df["mc_project_id"].dropna().astype(str).str.replace("MC-", "", regex=False))
+    opps_in_scope = len(all_sf_ids | all_mc_ids)
+
+    unique_flagged_opps = len({e["opportunity_id"] for e in flags})
 
     # ---------- Flag cards ----------
-    flag_cards = []
-    for f in flags:
+    def _render_flag_card(f):
         customer = opp_customer.get(f["opportunity_id"], "")
         sf_record = opp_sf_record.get(f["opportunity_id"], "")
-        link = f"{_SF_BASE_URL}/{sf_record}/view" if _SF_BASE_URL and sf_record else "#"
-
+        link_html = ""
+        if _SF_BASE_URL and sf_record and not pd.isna(sf_record):
+            url = f"{_SF_BASE_URL}/{sf_record}/view"
+            link_html = f'<a href="{_h(url)}" class="card-btn" target="_blank" rel="noopener noreferrer">Open in Salesforce ↗</a>'
         if f["bucket"] == "missing_record":
             title = "Missing from Mission Control"
-            action = "Open the delivery record, or confirm the engagement was cancelled."
+            action = "Confirm the engagement is still active, then open the delivery record."
             runbook = "Missing Mission Control record"
         else:
-            title = f"Contract gap: {f['concept']}"
-            action = "SOP does not name an owner for this field. Raise in next ops sync."
+            title = f"Policy gap: {_h(f['concept'])}"
+            action = "SOP has not named an owner for this field. Decide and update contract.yaml."
             runbook = "Contract gap"
-
-        flag_cards.append(f"""
-        <div class="card card-flag">
+        return f"""
+        <article class="card card-flag">
           <div class="card-top">
             <div>
-              <div class="card-opp">{f['opportunity_id']} — {customer}</div>
-              <div class="card-title">{title}</div>
+              <div class="card-eyebrow">{_h(f['opportunity_id'])} · {_h(customer)}</div>
+              <h3 class="card-title">{title}</h3>
             </div>
-            <a href="{link}" class="btn" target="_blank">Open in Salesforce</a>
+            {link_html}
           </div>
-          <div class="card-action">{action}</div>
-          <div class="card-meta">Runbook: {runbook}</div>
-        </div>
-        """)
+          <p class="card-action">{action}</p>
+          <div class="card-meta">Runbook: {_h(runbook)}</div>
+        </article>
+        """
 
-    flag_cards_html = "".join(flag_cards) if flag_cards else '<div class="empty-state">Nothing flagged. The engine ran clean.</div>'
+    flag_cards_html = "".join(_render_flag_card(f) for f in flags) if flags else '<div class="empty">Nothing flagged. The engine ran clean.</div>'
 
-    # ---------- Correction cards ----------
-    correction_cards = []
-    for c in auto_corrections:
-        customer = opp_customer.get(c["opportunity_id"], "")
-        if c["winning_system"] == "salesforce":
-            was_value = c["mc_value"]
-            now_value = c["sf_value"]
-            was_source = "Mission Control"
-            now_source = "Salesforce"
+    # ---------- Decision cards ----------
+    def _render_decision_card(d):
+        customer = opp_customer.get(d["opportunity_id"], "")
+        if d["winning_system"] == "salesforce":
+            was_value, now_value = d["mc_value"], d["sf_value"]
+            was_source, now_source = "Mission Control", "Salesforce"
         else:
-            was_value = c["sf_value"]
-            now_value = c["mc_value"]
-            was_source = "Salesforce"
-            now_source = "Mission Control"
-
-        rule_label = "Ownership rule" if c["rule_applied"] == "ownership" else "Recency rule"
-
-        correction_cards.append(f"""
-        <div class="card card-correct">
+            was_value, now_value = d["sf_value"], d["mc_value"]
+            was_source, now_source = "Salesforce", "Mission Control"
+        rule_label = "Ownership rule" if d["rule_applied"] == "ownership" else "Recency rule"
+        return f"""
+        <article class="card card-decision">
           <div class="card-top">
             <div>
-              <div class="card-opp">{c['opportunity_id']} — {customer}</div>
-              <div class="card-title">{c['concept']}</div>
+              <div class="card-eyebrow">{_h(d['opportunity_id'])} · {_h(customer)}</div>
+              <h3 class="card-title">{_h(d['concept'])}</h3>
             </div>
-            <div class="rule-pill">{rule_label}</div>
+            <span class="pill pill-decision">{_h(rule_label)}</span>
           </div>
-          <div class="ba-row">
-            <div class="ba-col ba-was">
-              <div class="ba-label">Was · {was_source}</div>
-              <div class="ba-value">{was_value}</div>
+          <div class="values">
+            <div class="values-col values-was">
+              <small>Current · {_h(was_source)}</small>
+              <div class="values-text">{_h(was_value)}</div>
             </div>
-            <div class="ba-arrow">→</div>
-            <div class="ba-col ba-now">
-              <div class="ba-label">Now · {now_source}</div>
-              <div class="ba-value">{now_value}</div>
+            <span class="values-arrow">→</span>
+            <div class="values-col values-now">
+              <small>Proposed · {_h(now_source)}</small>
+              <div class="values-text">{_h(now_value)}</div>
             </div>
           </div>
-          <div class="card-meta">{c['reason']}</div>
+          <p class="card-meta"><em>{_h(d['reason'])}</em></p>
+        </article>
+        """
+
+    decision_cards_html = "".join(_render_decision_card(d) for d in decisions) if decisions else '<div class="empty">No corrections proposed this run.</div>'
+
+    # ---------- Held cards (small) ----------
+    def _render_held_card(h):
+        customer = opp_customer.get(h["opportunity_id"], "")
+        return f"""
+        <div class="card card-held">
+          <div class="card-top">
+            <div>
+              <div class="card-eyebrow">{_h(h['opportunity_id'])} · {_h(customer)}</div>
+              <h3 class="card-title">{_h(h['concept'])}</h3>
+            </div>
+            <span class="pill pill-held">Held</span>
+          </div>
+          <p class="card-meta">{_h(h['reason'])}</p>
         </div>
-        """)
+        """
 
-    correction_cards_html = "".join(correction_cards) if correction_cards else '<div class="empty-state">No corrections applied today.</div>'
+    held_cards_html = "".join(_render_held_card(h) for h in held) if held else '<div class="empty">Nothing on hold this run.</div>'
 
-    # ---------- Trend text ----------
-    recency_fields = Counter(e["concept"] for e in todays_entries if e["rule_applied"] == "recency")
-    if recency_fields:
-        top_field, top_count = recency_fields.most_common(1)[0]
-        trend_text = f"Most-drifted field today: <strong>{top_field}</strong> ({top_count} correction{'s' if top_count > 1 else ''}). If this keeps appearing week after week, the fix lives upstream in the GTM process, not in reconciliation."
-    else:
-        trend_text = "No recurring drift detected today."
-
-    # ---------- Raw data (collapsed) ----------
-    def _render_table(df, highlight_col):
-        headers = "".join(f"<th>{col}</th>" for col in df.columns)
-        rows = []
+    # ---------- Raw data tables ----------
+    def _render_data_table(df, highlight_col):
+        headers = "".join(f"<th>{_h(col)}</th>" for col in df.columns)
+        rows_html = []
         for _, row in df.iterrows():
-            opp_id = str(row[highlight_col])
-            clean_id = opp_id.replace("MC-", "")
-            if clean_id in {e["opportunity_id"] for e in auto_corrections}:
-                cls = ' class="row-correct"'
-            elif clean_id in {e["opportunity_id"] for e in flags}:
-                cls = ' class="row-flag"'
+            raw_id = str(row[highlight_col])
+            clean_id = raw_id.replace("MC-", "")
+            if clean_id in {e["opportunity_id"] for e in flags}:
+                row_class = ' class="row-flag"'
+            elif clean_id in {e["opportunity_id"] for e in decisions}:
+                row_class = ' class="row-decision"'
             elif clean_id in {e["opportunity_id"] for e in held}:
-                cls = ' class="row-hold"'
+                row_class = ' class="row-held"'
             else:
-                cls = ""
-            cells = "".join(f"<td>{row[col]}</td>" for col in df.columns)
-            rows.append(f"<tr{cls}>{cells}</tr>")
-        return f"<table class='data-table'><thead><tr>{headers}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+                row_class = ""
+            cells = "".join(f"<td>{_h(row[col])}</td>" for col in df.columns)
+            rows_html.append(f"<tr{row_class}>{cells}</tr>")
+        return f"<table class='data-table'><thead><tr>{headers}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
 
-    sf_table = _render_table(sf_df, "opportunity_id")
-    mc_table = _render_table(mc_df, "mc_project_id")
+    sf_table = _render_data_table(sf_df, "opportunity_id")
+    mc_table = _render_data_table(mc_df, "mc_project_id")
 
-    # ---------- HTML ----------
+    # ---------- Decision policy sidebar ----------
+    threshold = 4  # pulled from contract in a mature build; hardcoded here for simplicity
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deal Desk Reconciliation — {RUN_DATE_STR}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deal Desk | Reconciliation — {_h(RUN_DATE_STR)}</title>
 <style>
   :root {{
-    --bg: #f6f7f9;
+    --bg: #f6f8fb;
     --panel: #ffffff;
-    --text: #0f172a;
-    --text-muted: #64748b;
-    --text-subtle: #94a3b8;
-    --border: #e2e8f0;
-    --border-strong: #cbd5e1;
-    --flag-bg: #fffbeb;
-    --flag-border: #f59e0b;
-    --flag-text: #92400e;
-    --correct-bg: #eff6ff;
-    --correct-border: #3b82f6;
-    --correct-text: #1e40af;
-    --hold-bg: #f1f5f9;
-    --hold-border: #94a3b8;
-    --accent: #0f172a;
+    --ink: #152239;
+    --muted: #65758a;
+    --subtle: #8995a8;
+    --line: #e5eaf1;
+    --blue: #3768d6;
+    --blue-bg: #eaf0ff;
+    --blue-text: #2857b3;
+    --amber: #b67a26;
+    --amber-bg: #fff5e6;
+    --amber-text: #a46c1d;
+    --red: #bf5d4b;
+    --red-bg: #fff1ed;
+    --red-text: #a44b3a;
   }}
   * {{ box-sizing: border-box; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
-    background: var(--bg);
-    color: var(--text);
     margin: 0;
-    padding: 2.5rem 1.25rem;
-    line-height: 1.55;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
   }}
-  .wrap {{ max-width: 1040px; margin: 0 auto; }}
-  header {{ margin-bottom: 2rem; }}
-  h1 {{ font-size: 1.6rem; font-weight: 600; margin: 0 0 0.25rem 0; letter-spacing: -0.01em; }}
-  .subtitle {{ color: var(--text-muted); font-size: 0.9rem; }}
-  .status-band {{
+  .shell {{ max-width: 1200px; margin: 0 auto; padding: 36px 24px 60px; }}
+  .topline {{ display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }}
+  .brand {{ font-size: 11px; letter-spacing: 0.12em; font-weight: 700; color: #3866b2; text-transform: uppercase; }}
+  .runbadge {{
+    display: inline-flex; align-items: center; gap: 8px;
+    background: #e8f5f0; color: #277460;
+    padding: 6px 12px; border-radius: 100px;
+    font-size: 11px; font-weight: 700;
+  }}
+  .runbadge::before {{ content: ""; background: #299475; width: 7px; height: 7px; border-radius: 50%; }}
+  h1 {{ font-size: 30px; letter-spacing: -0.03em; margin: 14px 0 6px; font-weight: 700; }}
+  .lede {{ margin: 0; color: var(--muted); font-size: 14px; }}
+  .banner {{
+    margin: 20px 0 0;
+    padding: 14px 18px;
+    background: #fff8e6;
+    border: 1px solid #f0d78a;
+    border-left: 3px solid var(--amber);
+    border-radius: 8px;
+    font-size: 13px;
+    color: #6b4e00;
+  }}
+  .banner strong {{ color: #4a3700; }}
+  .stats {{
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 14px;
+    margin: 28px 0 0;
+  }}
+  .stat {{
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.25rem 1.5rem;
-    margin: 1.5rem 0 2.5rem 0;
-    font-size: 1rem;
-    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
   }}
-  .status-band strong {{ color: var(--flag-text); }}
-  section {{ margin-bottom: 2.5rem; }}
-  h2 {{
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-subtle);
-    margin: 0 0 0.9rem 0;
+  .stat .label {{ color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }}
+  .stat .num {{ font-size: 32px; line-height: 1.15; letter-spacing: -0.03em; font-weight: 700; margin: 8px 0 4px; }}
+  .stat small {{ color: var(--subtle); font-size: 11px; }}
+  .stat.flag .num {{ color: var(--red); }}
+  .stat.decision .num {{ color: var(--blue); }}
+  .layout {{
+    display: grid;
+    grid-template-columns: minmax(0, 1.9fr) minmax(260px, 0.85fr);
+    gap: 20px;
+    align-items: start;
+    margin-top: 28px;
   }}
-  .card {{
+  @media (max-width: 900px) {{
+    .layout {{ grid-template-columns: 1fr; }}
+    .stats {{ grid-template-columns: repeat(2, 1fr); }}
+  }}
+  .panel {{
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.1rem 1.3rem;
-    margin-bottom: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 22px;
   }}
-  .card-flag {{ border-left: 3px solid var(--flag-border); }}
-  .card-correct {{ border-left: 3px solid var(--correct-border); }}
-  .card-top {{
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: 1rem;
-    margin-bottom: 0.6rem;
-  }}
-  .card-opp {{ font-size: 0.78rem; color: var(--text-muted); font-weight: 500; letter-spacing: 0.02em; }}
-  .card-title {{ font-size: 1rem; font-weight: 600; margin-top: 0.15rem; }}
-  .card-action {{ font-size: 0.92rem; color: var(--text); margin-bottom: 0.5rem; }}
-  .card-meta {{ font-size: 0.78rem; color: var(--text-subtle); }}
-  .btn {{
+  .panel + .panel {{ margin-top: 20px; }}
+  .section-head {{ margin-bottom: 14px; }}
+  .section-head h2 {{ margin: 0; font-size: 16px; letter-spacing: -0.01em; font-weight: 650; }}
+  .section-head .caption {{ color: var(--muted); font-size: 12px; margin-top: 3px; }}
+  .card {{ padding: 16px 0; border-bottom: 1px solid var(--line); }}
+  .card:last-child {{ border-bottom: 0; padding-bottom: 0; }}
+  .card:first-child {{ padding-top: 0; }}
+  .card-top {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }}
+  .card-eyebrow {{ font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: 0.02em; }}
+  .card-title {{ font-size: 15px; margin: 4px 0 0; font-weight: 650; letter-spacing: -0.01em; }}
+  .card-action {{ margin: 10px 0 8px; color: #4b5a6e; font-size: 13px; }}
+  .card-meta {{ font-size: 12px; color: var(--muted); margin: 10px 0 0; }}
+  .card-btn {{
     display: inline-block;
-    padding: 0.4rem 0.85rem;
-    background: var(--text);
+    padding: 7px 13px;
+    background: var(--ink);
     color: #fff;
     text-decoration: none;
-    border-radius: 6px;
-    font-size: 0.82rem;
+    border-radius: 7px;
+    font-size: 12px;
     font-weight: 500;
     white-space: nowrap;
   }}
-  .btn:hover {{ opacity: 0.9; }}
-  .rule-pill {{
-    display: inline-block;
-    padding: 0.25rem 0.65rem;
-    background: var(--correct-bg);
-    color: var(--correct-text);
-    border-radius: 999px;
-    font-size: 0.72rem;
-    font-weight: 500;
-    white-space: nowrap;
+  .card-btn:hover {{ opacity: 0.9; }}
+  .pill {{
+    font-size: 11px; white-space: nowrap;
+    padding: 4px 10px; border-radius: 100px;
+    font-weight: 600;
   }}
-  .ba-row {{
+  .pill-decision {{ background: var(--blue-bg); color: var(--blue-text); }}
+  .pill-held {{ background: var(--amber-bg); color: var(--amber-text); }}
+  .values {{
     display: grid;
     grid-template-columns: 1fr auto 1fr;
-    gap: 0.75rem;
+    gap: 12px;
     align-items: center;
-    margin: 0.75rem 0;
-    padding: 0.85rem;
-    background: var(--bg);
-    border-radius: 8px;
+    margin: 12px 0 8px;
+    padding: 12px 14px;
+    background: #f7f9fc;
+    border: 1px solid #edf0f4;
+    border-radius: 9px;
   }}
-  .ba-col {{ min-width: 0; }}
-  .ba-label {{ font-size: 0.7rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }}
-  .ba-value {{ font-size: 0.95rem; font-weight: 500; word-break: break-word; }}
-  .ba-was .ba-value {{ color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-subtle); }}
-  .ba-arrow {{ color: var(--text-subtle); font-size: 1.1rem; }}
-  .empty-state {{
-    padding: 1.25rem;
+  .values-col {{ min-width: 0; }}
+  .values-col small {{
+    display: block;
+    color: var(--subtle);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }}
+  .values-text {{ font-weight: 600; word-break: break-word; }}
+  .values-was .values-text {{ color: var(--muted); text-decoration: line-through; text-decoration-color: var(--subtle); }}
+  .values-arrow {{ color: var(--subtle); font-size: 16px; }}
+  .empty {{
+    padding: 24px;
     text-align: center;
-    color: var(--text-subtle);
-    font-size: 0.9rem;
-    background: var(--panel);
-    border: 1px dashed var(--border);
-    border-radius: 10px;
+    color: var(--subtle);
+    font-size: 13px;
+    background: #fbfcfe;
+    border: 1px dashed var(--line);
+    border-radius: 9px;
   }}
-  .held-note, .trend-note {{
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1rem 1.25rem;
-    font-size: 0.9rem;
-    color: var(--text-muted);
+  .card-held {{ padding: 14px 0; }}
+  .card-flag {{ border-left: 3px solid var(--red); padding-left: 14px; }}
+  .card-decision {{ border-left: 3px solid var(--blue); padding-left: 14px; }}
+  .policy-row {{
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+    gap: 12px;
+    font-size: 13px;
   }}
-  details.raw-data {{
-    margin-top: 2.5rem;
+  .policy-row:last-child {{ border-bottom: 0; padding-bottom: 0; }}
+  .policy-row span {{ color: var(--muted); }}
+  .policy-row strong {{ color: var(--ink); font-weight: 600; }}
+  .policy-note {{ font-size: 11px; color: var(--subtle); margin: 10px 0 0; }}
+  details.raw {{
+    margin-top: 24px;
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1rem 1.25rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 22px;
   }}
-  details.raw-data summary {{
+  details.raw summary {{
     cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 500;
-    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 13px;
+    color: #45607e;
     user-select: none;
   }}
-  details.raw-data[open] summary {{ margin-bottom: 1.25rem; }}
-  .raw-tables {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
-  @media (max-width: 820px) {{ .raw-tables {{ grid-template-columns: 1fr; }} }}
+  details.raw[open] summary {{ margin-bottom: 16px; }}
+  .raw-tables {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+  @media (max-width: 900px) {{ .raw-tables {{ grid-template-columns: 1fr; }} }}
+  .raw-table-title {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--subtle); margin: 0 0 6px; font-weight: 600; }}
   .raw-table-wrap {{ overflow-x: auto; }}
-  .raw-table-title {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-subtle); margin: 0 0 0.5rem 0; font-weight: 500; }}
-  table.data-table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
-  table.data-table th, table.data-table td {{ padding: 0.4rem 0.55rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }}
-  table.data-table th {{ font-weight: 500; color: var(--text-subtle); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }}
-  tr.row-correct td {{ background: var(--correct-bg); }}
-  tr.row-correct td:first-child {{ border-left: 2px solid var(--correct-border); }}
-  tr.row-flag td {{ background: var(--flag-bg); }}
-  tr.row-flag td:first-child {{ border-left: 2px solid var(--flag-border); }}
-  tr.row-hold td {{ background: var(--hold-bg); }}
-  tr.row-hold td:first-child {{ border-left: 2px solid var(--hold-border); }}
+  table.data-table {{ width: 100%; border-collapse: collapse; font-size: 12px; }}
+  table.data-table th, table.data-table td {{ padding: 7px 9px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }}
+  table.data-table th {{ font-weight: 600; color: var(--subtle); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }}
+  tr.row-decision td {{ background: var(--blue-bg); }}
+  tr.row-decision td:first-child {{ border-left: 2px solid var(--blue); font-weight: 600; }}
+  tr.row-flag td {{ background: var(--red-bg); }}
+  tr.row-flag td:first-child {{ border-left: 2px solid var(--red); font-weight: 600; }}
+  tr.row-held td {{ background: var(--amber-bg); }}
+  tr.row-held td:first-child {{ border-left: 2px solid var(--amber); font-weight: 600; }}
   footer {{
-    margin-top: 2.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--border);
-    color: var(--text-subtle);
-    font-size: 0.8rem;
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+  }}
+  footer strong {{ color: var(--ink); }}
+  footer code {{
+    background: #f0f3f8;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #45607e;
   }}
 </style>
 </head>
 <body>
-<div class="wrap">
+<main class="shell">
 
-  <header>
-    <h1>Deal Desk Reconciliation</h1>
-    <div class="subtitle">Run of {RUN_DATE_STR}</div>
-  </header>
+  <div class="topline">
+    <span class="brand">Deal Desk · Reconciliation</span>
+    <span class="runbadge">Run complete</span>
+  </div>
 
-  <div class="status-band">{status_line}.</div>
+  <h1>Reconciliation overview</h1>
+  <p class="lede">Salesforce ↔ Mission Control · {_h(RUN_DATE_STR)} · Read-only report</p>
 
-  <section>
-    <h2>Needs attention</h2>
-    {flag_cards_html}
-  </section>
+  <div class="banner">
+    <strong>Demo artifact.</strong> The engine proposes corrections based on the SOP. It does not write back to Salesforce or Mission Control in this build — a write-back module is the next engineering step. See README for the full list of known limitations.
+  </div>
 
-  <section>
-    <h2>Corrections applied silently</h2>
-    {correction_cards_html}
-  </section>
-
-  <section>
-    <h2>Held while they stabilize</h2>
-    <div class="held-note">
-      {len(held)} discrepanc{'y' if len(held) == 1 else 'ies'} had changes less than the 4-hour persistence threshold. The engine waits to confirm they persist before acting, so a mid-sync update does not create a false correction. Will re-check next run.
+  <section class="stats" aria-label="Summary">
+    <div class="stat">
+      <div class="label">Opportunities in scope</div>
+      <div class="num">{opps_in_scope}</div>
+      <small>Unique IDs across both systems</small>
+    </div>
+    <div class="stat flag">
+      <div class="label">Needing review</div>
+      <div class="num">{unique_flagged_opps}</div>
+      <small>{len(flags)} flagged discrepancies</small>
+    </div>
+    <div class="stat decision">
+      <div class="label">Corrections proposed</div>
+      <div class="num">{len(decisions)}</div>
+      <small>By ownership or recency rule</small>
+    </div>
+    <div class="stat">
+      <div class="label">Held</div>
+      <div class="num">{len(held)}</div>
+      <small>{threshold}-hour stabilization window</small>
     </div>
   </section>
 
-  <section>
-    <h2>Pattern this week</h2>
-    <div class="trend-note">{trend_text}</div>
-  </section>
+  <div class="layout">
 
-  <details class="raw-data">
+    <div>
+      <section class="panel">
+        <div class="section-head">
+          <h2>Needs review</h2>
+          <div class="caption">Human decision required. Each item links to its Salesforce record.</div>
+        </div>
+        {flag_cards_html}
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Corrections proposed</h2>
+          <div class="caption">Decisions the engine would apply if the write-back layer were enabled.</div>
+        </div>
+        {decision_cards_html}
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Held while they stabilize</h2>
+          <div class="caption">Changes less than the {threshold}-hour threshold. Re-evaluated next run.</div>
+        </div>
+        {held_cards_html}
+      </section>
+    </div>
+
+    <aside>
+      <section class="panel">
+        <div class="section-head">
+          <h2>Decision policy</h2>
+          <div class="caption">The SOP the engine applies, in one glance.</div>
+        </div>
+        <div class="policy-row"><span>Field ownership</span><strong>Owner wins</strong></div>
+        <div class="policy-row"><span>Shared fields</span><strong>Newest record*</strong></div>
+        <div class="policy-row"><span>Unresolved SOP gaps</span><strong>Human review</strong></div>
+        <div class="policy-row"><span>Stabilization</span><strong>{threshold} hours</strong></div>
+        <p class="policy-note">*Current recency logic uses record-level timestamps, not field-level change history. See README.</p>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Role of each surface</h2>
+        </div>
+        <div class="policy-row"><span>Slack</span><strong>Notification</strong></div>
+        <div class="policy-row"><span>Salesforce</span><strong>Operational resolution</strong></div>
+        <div class="policy-row"><span>This dashboard</span><strong>Observability</strong></div>
+        <p class="policy-note">Keeping these separate means operators never adopt a new tool to do their work.</p>
+      </section>
+    </aside>
+
+  </div>
+
+  <details class="raw">
     <summary>Show raw system state (inputs, color-coded by action)</summary>
     <div class="raw-tables">
       <div>
@@ -899,10 +955,10 @@ def emit_dashboard():
   </details>
 
   <footer>
-    Demo artifact. In production, flags route to Salesforce as a custom object, the daily post lands in the Deal Desk Slack channel, and the audit log feeds the warehouse. Nothing new for the team to adopt.
+    <strong>Prototype, not production.</strong> Run ID: <code>{_h(RUN_ID)}</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
   </footer>
 
-</div>
+</main>
 </body>
 </html>
 """
@@ -912,43 +968,40 @@ def emit_dashboard():
 
     return {"dashboard_path": str(DASHBOARD_HTML)}
 
+
 # -------------------------------------------------------------------
-# Small helpers used by emit_outputs.
+# Small helpers
 # -------------------------------------------------------------------
 
 def _serialize(value):
     """Convert pandas/numpy types to JSON-serializable Python types."""
     if pd.isna(value):
         return None
-    if hasattr(value, "item"):  # numpy scalar
+    if hasattr(value, "item"):
         return value.item()
     return value
 
 
-def _count_opportunities_in_log(log):
-    """Rough count of distinct opportunities touched today."""
-    today = {entry["opportunity_id"] for entry in log if entry["run_date"] == RUN_DATE_STR}
-    return len(today) if today else 0
+def _count_opportunities_in_current_run(log):
+    current = {entry["opportunity_id"] for entry in log if entry.get("run_id") == RUN_ID}
+    return len(current) if current else 0
 
 
 def _pluralize(singular, plural, count):
     return singular if count == 1 else plural
 
-# Module-level config loaded once for link building
+
 _SF_BASE_URL = None
 
 
 def _build_opp_link(opp_id, sf_record_id):
-    """
-    Returns a Slack-formatted link for an opportunity.
-    If a Salesforce base URL is configured and the record has a Salesforce ID,
-    returns a clickable <url|OPP-xxx> link. Otherwise returns the plain ID.
-    """
     if _SF_BASE_URL and sf_record_id and not pd.isna(sf_record_id):
         return f"<{_SF_BASE_URL}/{sf_record_id}/view|{opp_id}>"
     return opp_id
+
+
 # -------------------------------------------------------------------
-# Temporary test — remove once we build the real main() function.
+# Entry point
 # -------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -965,16 +1018,15 @@ if __name__ == "__main__":
     weekly_result = emit_weekly_rollup()
     dashboard_result = emit_dashboard()
 
-    print(f"\nRun complete.")
+    print(f"\nRun complete. (run_id: {RUN_ID[:8]}...)")
     print(f"  Log entries written: {result['log_entries_written']}")
     print(f"  Slack message: {result['slack_message_path']}")
     print(f"  Flags: {result['flags']}")
-    print(f"  Auto-corrections: {result['auto_corrections']}")
+    print(f"  Corrections proposed: {result['auto_corrections']}")
     print(f"  Held: {result['held']}")
     print(f"\n--- Slack message contents ---")
     with open(result['slack_message_path']) as f:
         print(f.read())
-
     if weekly_result:
         print(f"\n--- Weekly rollup contents ---")
         with open(weekly_result['weekly_message_path']) as f:
