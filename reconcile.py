@@ -541,25 +541,15 @@ def emit_weekly_rollup():
         "fields_drifting": dict(recency_fields),
         "gaps_open": list(gaps_this_week),
     }
-
-
-# -------------------------------------------------------------------
-# Dashboard — single static HTML page combining inputs, engine thinking,
-# and outputs. Regenerated every run.
-# -------------------------------------------------------------------
-
 def emit_dashboard():
     """
-    Reads the two input CSVs, the audit log, and both Slack messages,
-    then writes a single HTML dashboard to output/dashboard.html.
-
-    Three sections:
-      1. The inputs — both CSVs rendered as tables, disagreement rows highlighted
-      2. The engine's thinking — classification table, color-coded by action
-      3. The outputs — daily Slack, weekly rollup, audit log sample
-
-    No JavaScript, no external dependencies. Opens in any browser.
+    Writes a command-center style HTML dashboard.
+    Structured as a Monday-morning briefing: action first, then what the
+    engine did, then supporting data on request.
     """
+
+    import re
+    from collections import Counter
 
     sf_df = pd.read_csv(SALESFORCE_CSV)
     mc_df = pd.read_csv(MISSION_CONTROL_CSV)
@@ -567,259 +557,350 @@ def emit_dashboard():
     with open(AUDIT_LOG, "r") as f:
         log = json.load(f)
 
-    # Filter log to today's run only — dashboard shows the latest state.
     todays_entries = [e for e in log if e["run_date"] == RUN_DATE_STR]
 
-    # Opportunity IDs that have a discrepancy this run — used for row highlighting.
-    disagreement_ids = {e["opportunity_id"] for e in todays_entries}
+    # Lookups so we can show customer names and link to the actual Salesforce record.
+    opp_customer = dict(zip(sf_df["opportunity_id"], sf_df["customer_name"]))
+    opp_sf_record = dict(zip(sf_df["opportunity_id"], sf_df["sf_record_id"]))
 
-    # Load the Slack files for rendering in Section 3.
-    slack_daily_path = SLACK_DIR / f"slack_{RUN_DATE_STR}.txt"
-    slack_weekly_path = SLACK_DIR / f"weekly_{RUN_DATE_STR}.txt"
-    daily_slack = slack_daily_path.read_text() if slack_daily_path.exists() else ""
-    weekly_slack = slack_weekly_path.read_text() if slack_weekly_path.exists() else ""
+    auto_corrections = [e for e in todays_entries if e["action"] == "auto_correct"]
+    flags = [e for e in todays_entries if e["action"] == "flag"]
+    held = [e for e in todays_entries if e["action"] == "hold"]
 
-    # Convert the Slack text to displayable HTML — unwrap <url|label> into just the label
-    # (bold), convert *bold* markers to <strong>, preserve line breaks.
-    import re
-    def _slack_to_html(text):
-        text = re.sub(r"<([^|]+)\|([^>]+)>", r"\2", text)  # unwrap links to label text
-        text = re.sub(r"\*([^*]+)\*", r"<strong>\1</strong>", text)  # bold
-        text = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"<em>\1</em>", text)  # italic (only when not inside words)
-        return text.replace("\n", "<br>")
+    # ---------- Status band ----------
+    status_parts = []
+    if flags:
+        status_parts.append(f"<strong>{len(flags)} need attention</strong>")
+    if auto_corrections:
+        status_parts.append(f"{len(auto_corrections)} corrected silently")
+    if held:
+        status_parts.append(f"{len(held)} held while they stabilize")
+    status_line = " · ".join(status_parts) if status_parts else "No activity today."
 
-    daily_html = _slack_to_html(daily_slack)
-    weekly_html = _slack_to_html(weekly_slack)
+    # ---------- Flag cards ----------
+    flag_cards = []
+    for f in flags:
+        customer = opp_customer.get(f["opportunity_id"], "")
+        sf_record = opp_sf_record.get(f["opportunity_id"], "")
+        link = f"{_SF_BASE_URL}/{sf_record}/view" if _SF_BASE_URL and sf_record else "#"
 
-    # Build the input tables.
-    def _render_table(df, highlight_col, highlight_ids):
+        if f["bucket"] == "missing_record":
+            title = "Missing from Mission Control"
+            action = "Open the delivery record, or confirm the engagement was cancelled."
+            runbook = "Missing Mission Control record"
+        else:
+            title = f"Contract gap: {f['concept']}"
+            action = "SOP does not name an owner for this field. Raise in next ops sync."
+            runbook = "Contract gap"
+
+        flag_cards.append(f"""
+        <div class="card card-flag">
+          <div class="card-top">
+            <div>
+              <div class="card-opp">{f['opportunity_id']} — {customer}</div>
+              <div class="card-title">{title}</div>
+            </div>
+            <a href="{link}" class="btn" target="_blank">Open in Salesforce</a>
+          </div>
+          <div class="card-action">{action}</div>
+          <div class="card-meta">Runbook: {runbook}</div>
+        </div>
+        """)
+
+    flag_cards_html = "".join(flag_cards) if flag_cards else '<div class="empty-state">Nothing flagged. The engine ran clean.</div>'
+
+    # ---------- Correction cards ----------
+    correction_cards = []
+    for c in auto_corrections:
+        customer = opp_customer.get(c["opportunity_id"], "")
+        if c["winning_system"] == "salesforce":
+            was_value = c["mc_value"]
+            now_value = c["sf_value"]
+            was_source = "Mission Control"
+            now_source = "Salesforce"
+        else:
+            was_value = c["sf_value"]
+            now_value = c["mc_value"]
+            was_source = "Salesforce"
+            now_source = "Mission Control"
+
+        rule_label = "Ownership rule" if c["rule_applied"] == "ownership" else "Recency rule"
+
+        correction_cards.append(f"""
+        <div class="card card-correct">
+          <div class="card-top">
+            <div>
+              <div class="card-opp">{c['opportunity_id']} — {customer}</div>
+              <div class="card-title">{c['concept']}</div>
+            </div>
+            <div class="rule-pill">{rule_label}</div>
+          </div>
+          <div class="ba-row">
+            <div class="ba-col ba-was">
+              <div class="ba-label">Was · {was_source}</div>
+              <div class="ba-value">{was_value}</div>
+            </div>
+            <div class="ba-arrow">→</div>
+            <div class="ba-col ba-now">
+              <div class="ba-label">Now · {now_source}</div>
+              <div class="ba-value">{now_value}</div>
+            </div>
+          </div>
+          <div class="card-meta">{c['reason']}</div>
+        </div>
+        """)
+
+    correction_cards_html = "".join(correction_cards) if correction_cards else '<div class="empty-state">No corrections applied today.</div>'
+
+    # ---------- Trend text ----------
+    recency_fields = Counter(e["concept"] for e in todays_entries if e["rule_applied"] == "recency")
+    if recency_fields:
+        top_field, top_count = recency_fields.most_common(1)[0]
+        trend_text = f"Most-drifted field today: <strong>{top_field}</strong> ({top_count} correction{'s' if top_count > 1 else ''}). If this keeps appearing week after week, the fix lives upstream in the GTM process, not in reconciliation."
+    else:
+        trend_text = "No recurring drift detected today."
+
+    # ---------- Raw data (collapsed) ----------
+    def _render_table(df, highlight_col):
         headers = "".join(f"<th>{col}</th>" for col in df.columns)
         rows = []
         for _, row in df.iterrows():
             opp_id = str(row[highlight_col])
-            # Match on either the raw or stripped (MC-prefixed) opportunity ID
             clean_id = opp_id.replace("MC-", "")
-            row_class = ' class="flag-row"' if clean_id in highlight_ids else ""
+            if clean_id in {e["opportunity_id"] for e in auto_corrections}:
+                cls = ' class="row-correct"'
+            elif clean_id in {e["opportunity_id"] for e in flags}:
+                cls = ' class="row-flag"'
+            elif clean_id in {e["opportunity_id"] for e in held}:
+                cls = ' class="row-hold"'
+            else:
+                cls = ""
             cells = "".join(f"<td>{row[col]}</td>" for col in df.columns)
-            rows.append(f"<tr{row_class}>{cells}</tr>")
-        return f"<table><thead><tr>{headers}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
+            rows.append(f"<tr{cls}>{cells}</tr>")
+        return f"<table class='data-table'><thead><tr>{headers}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
 
-    sf_table = _render_table(sf_df, "opportunity_id", disagreement_ids)
-    mc_table = _render_table(mc_df, "mc_project_id", disagreement_ids)
+    sf_table = _render_table(sf_df, "opportunity_id")
+    mc_table = _render_table(mc_df, "mc_project_id")
 
-    # Build the classification table.
-    bucket_classes = {
-        "owned_field": "action-correct",
-        "shared_field": "action-correct",
-        "missing_record": "action-flag",
-        "contract_gap": "action-flag",
-        "below_threshold": "action-hold",
-    }
-
-    classification_rows = []
-    for e in todays_entries:
-        row_class = bucket_classes.get(e["bucket"], "")
-        classification_rows.append(f"""
-            <tr class="{row_class}">
-                <td><strong>{e['opportunity_id']}</strong></td>
-                <td>{e['concept'] or '—'}</td>
-                <td>{e['bucket'].replace('_', ' ')}</td>
-                <td>{e['rule_applied']}</td>
-                <td>{e['action'].replace('_', ' ')}</td>
-                <td class="reason">{e['reason']}</td>
-            </tr>
-        """)
-    classification_table = f"""
-        <table>
-            <thead>
-                <tr>
-                    <th>Opportunity</th>
-                    <th>Field</th>
-                    <th>Bucket</th>
-                    <th>Rule</th>
-                    <th>Action</th>
-                    <th>Reason</th>
-                </tr>
-            </thead>
-            <tbody>{''.join(classification_rows)}</tbody>
-        </table>
-    """
-
-    # Build an audit log sample — the first 5 entries from today.
-    log_sample = todays_entries[:5]
-    log_rows = []
-    for e in log_sample:
-        log_rows.append(f"""
-            <tr>
-                <td>{e['run_timestamp'][:16].replace('T', ' ')}</td>
-                <td>{e['opportunity_id']}</td>
-                <td>{e['bucket'].replace('_', ' ')}</td>
-                <td>{e['action'].replace('_', ' ')}</td>
-                <td>{e['winning_system'] or '—'}</td>
-            </tr>
-        """)
-    log_table = f"""
-        <table class="log-sample">
-            <thead>
-                <tr>
-                    <th>Timestamp (UTC)</th>
-                    <th>Opportunity</th>
-                    <th>Bucket</th>
-                    <th>Action</th>
-                    <th>Winner</th>
-                </tr>
-            </thead>
-            <tbody>{''.join(log_rows)}</tbody>
-        </table>
-    """
-
-    # Headline stats.
-    corrections = sum(1 for e in todays_entries if e["action"] == "auto_correct")
-    flags = sum(1 for e in todays_entries if e["action"] == "flag")
-    held = sum(1 for e in todays_entries if e["action"] == "hold")
-
+    # ---------- HTML ----------
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Deal Desk Reconciliation — {RUN_DATE_STR}</title>
 <style>
   :root {{
-    --bg: #fafafa;
+    --bg: #f6f7f9;
     --panel: #ffffff;
-    --text: #1a1a1a;
-    --muted: #6b7280;
-    --border: #e5e7eb;
-    --flag: #fef3c7;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --text-subtle: #94a3b8;
+    --border: #e2e8f0;
+    --border-strong: #cbd5e1;
+    --flag-bg: #fffbeb;
     --flag-border: #f59e0b;
-    --correct: #dbeafe;
+    --flag-text: #92400e;
+    --correct-bg: #eff6ff;
     --correct-border: #3b82f6;
-    --hold: #f3f4f6;
-    --hold-border: #9ca3af;
+    --correct-text: #1e40af;
+    --hold-bg: #f1f5f9;
+    --hold-border: #94a3b8;
     --accent: #0f172a;
   }}
   * {{ box-sizing: border-box; }}
   body {{
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
     background: var(--bg);
     color: var(--text);
     margin: 0;
-    padding: 2rem 1rem;
-    line-height: 1.5;
+    padding: 2.5rem 1.25rem;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
   }}
-  .wrap {{ max-width: 1100px; margin: 0 auto; }}
-  header {{ margin-bottom: 2.5rem; }}
-  h1 {{ font-size: 1.6rem; margin: 0 0 0.3rem 0; }}
-  .subtitle {{ color: var(--muted); font-size: 0.95rem; }}
-  .stats {{
-    display: flex; gap: 2rem; margin-top: 1.25rem;
-    padding: 1rem 1.25rem; background: var(--panel);
-    border: 1px solid var(--border); border-radius: 6px;
+  .wrap {{ max-width: 1040px; margin: 0 auto; }}
+  header {{ margin-bottom: 2rem; }}
+  h1 {{ font-size: 1.6rem; font-weight: 600; margin: 0 0 0.25rem 0; letter-spacing: -0.01em; }}
+  .subtitle {{ color: var(--text-muted); font-size: 0.9rem; }}
+  .status-band {{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin: 1.5rem 0 2.5rem 0;
+    font-size: 1rem;
+    color: var(--text);
   }}
-  .stat-num {{ font-size: 1.5rem; font-weight: 600; }}
-  .stat-label {{ font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }}
-  section {{ margin-bottom: 3rem; }}
-  h2 {{ font-size: 1.1rem; margin: 0 0 0.4rem 0; }}
-  .section-desc {{ color: var(--muted); font-size: 0.9rem; margin: 0 0 1rem 0; }}
-  .tables-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
-  @media (max-width: 800px) {{ .tables-row {{ grid-template-columns: 1fr; }} }}
-  .panel {{
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 6px; overflow: hidden;
+  .status-band strong {{ color: var(--flag-text); }}
+  section {{ margin-bottom: 2.5rem; }}
+  h2 {{
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-subtle);
+    margin: 0 0 0.9rem 0;
   }}
-  .panel-head {{
-    padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
-    font-weight: 600; font-size: 0.9rem;
+  .card {{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.3rem;
+    margin-bottom: 0.75rem;
   }}
-  .panel-body {{ padding: 1rem; overflow-x: auto; }}
-  table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; }}
-  th, td {{ padding: 0.5rem 0.6rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }}
-  th {{ font-weight: 600; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; }}
-  tr.flag-row td {{ background: var(--flag); border-left: 3px solid var(--flag-border); }}
-  tr.flag-row td:first-child {{ font-weight: 600; }}
-  tr.action-correct {{ background: var(--correct); }}
-  tr.action-correct td {{ border-left: 3px solid var(--correct-border); }}
-  tr.action-correct td:not(:first-child) {{ border-left: none; }}
-  tr.action-flag {{ background: var(--flag); }}
-  tr.action-flag td {{ border-left: 3px solid var(--flag-border); }}
-  tr.action-flag td:not(:first-child) {{ border-left: none; }}
-  tr.action-hold {{ background: var(--hold); }}
-  tr.action-hold td {{ border-left: 3px solid var(--hold-border); }}
-  tr.action-hold td:not(:first-child) {{ border-left: none; }}
-  .reason {{ color: var(--muted); font-style: italic; }}
-  .outputs-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
-  @media (max-width: 800px) {{ .outputs-row {{ grid-template-columns: 1fr; }} }}
-  .slack-render {{
-    font-family: -apple-system, sans-serif;
-    font-size: 0.88rem; padding: 1rem; line-height: 1.6;
+  .card-flag {{ border-left: 3px solid var(--flag-border); }}
+  .card-correct {{ border-left: 3px solid var(--correct-border); }}
+  .card-top {{
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.6rem;
   }}
-  .log-sample {{ font-family: "SF Mono", Menlo, monospace; font-size: 0.78rem; }}
+  .card-opp {{ font-size: 0.78rem; color: var(--text-muted); font-weight: 500; letter-spacing: 0.02em; }}
+  .card-title {{ font-size: 1rem; font-weight: 600; margin-top: 0.15rem; }}
+  .card-action {{ font-size: 0.92rem; color: var(--text); margin-bottom: 0.5rem; }}
+  .card-meta {{ font-size: 0.78rem; color: var(--text-subtle); }}
+  .btn {{
+    display: inline-block;
+    padding: 0.4rem 0.85rem;
+    background: var(--text);
+    color: #fff;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }}
+  .btn:hover {{ opacity: 0.9; }}
+  .rule-pill {{
+    display: inline-block;
+    padding: 0.25rem 0.65rem;
+    background: var(--correct-bg);
+    color: var(--correct-text);
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 500;
+    white-space: nowrap;
+  }}
+  .ba-row {{
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0.75rem;
+    align-items: center;
+    margin: 0.75rem 0;
+    padding: 0.85rem;
+    background: var(--bg);
+    border-radius: 8px;
+  }}
+  .ba-col {{ min-width: 0; }}
+  .ba-label {{ font-size: 0.7rem; color: var(--text-subtle); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }}
+  .ba-value {{ font-size: 0.95rem; font-weight: 500; word-break: break-word; }}
+  .ba-was .ba-value {{ color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--text-subtle); }}
+  .ba-arrow {{ color: var(--text-subtle); font-size: 1.1rem; }}
+  .empty-state {{
+    padding: 1.25rem;
+    text-align: center;
+    color: var(--text-subtle);
+    font-size: 0.9rem;
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+  }}
+  .held-note, .trend-note {{
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    font-size: 0.9rem;
+    color: var(--text-muted);
+  }}
+  details.raw-data {{
+    margin-top: 2.5rem;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }}
+  details.raw-data summary {{
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    user-select: none;
+  }}
+  details.raw-data[open] summary {{ margin-bottom: 1.25rem; }}
+  .raw-tables {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }}
+  @media (max-width: 820px) {{ .raw-tables {{ grid-template-columns: 1fr; }} }}
+  .raw-table-wrap {{ overflow-x: auto; }}
+  .raw-table-title {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-subtle); margin: 0 0 0.5rem 0; font-weight: 500; }}
+  table.data-table {{ width: 100%; border-collapse: collapse; font-size: 0.78rem; }}
+  table.data-table th, table.data-table td {{ padding: 0.4rem 0.55rem; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }}
+  table.data-table th {{ font-weight: 500; color: var(--text-subtle); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }}
+  tr.row-correct td {{ background: var(--correct-bg); }}
+  tr.row-correct td:first-child {{ border-left: 2px solid var(--correct-border); }}
+  tr.row-flag td {{ background: var(--flag-bg); }}
+  tr.row-flag td:first-child {{ border-left: 2px solid var(--flag-border); }}
+  tr.row-hold td {{ background: var(--hold-bg); }}
+  tr.row-hold td:first-child {{ border-left: 2px solid var(--hold-border); }}
   footer {{
-    margin-top: 3rem; padding-top: 1.5rem;
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
     border-top: 1px solid var(--border);
-    color: var(--muted); font-size: 0.85rem;
+    color: var(--text-subtle);
+    font-size: 0.8rem;
   }}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-<header>
-  <h1>Deal Desk Reconciliation</h1>
-  <div class="subtitle">Run of {RUN_DATE_STR} · showing today's state</div>
-  <div class="stats">
-    <div><div class="stat-num">{corrections}</div><div class="stat-label">Auto-corrections</div></div>
-    <div><div class="stat-num">{flags}</div><div class="stat-label">Flagged for action</div></div>
-    <div><div class="stat-num">{held}</div><div class="stat-label">Held below threshold</div></div>
-    <div><div class="stat-num">{len(todays_entries)}</div><div class="stat-label">Total discrepancies</div></div>
-  </div>
-</header>
+  <header>
+    <h1>Deal Desk Reconciliation</h1>
+    <div class="subtitle">Run of {RUN_DATE_STR}</div>
+  </header>
 
-<section>
-  <h2>1. What the system sees</h2>
-  <p class="section-desc">Two systems, same opportunities, different vocabularies. Neither pushes to the other. Rows with discrepancies are highlighted.</p>
-  <div class="tables-row">
-    <div class="panel">
-      <div class="panel-head">Salesforce export</div>
-      <div class="panel-body">{sf_table}</div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">Mission Control export</div>
-      <div class="panel-body">{mc_table}</div>
-    </div>
-  </div>
-</section>
+  <div class="status-band">{status_line}.</div>
 
-<section>
-  <h2>2. How each discrepancy classified</h2>
-  <p class="section-desc">The engine classifies, logs, and either acts or flags. Nothing happens that the SOP didn't explicitly authorize.</p>
-  <div class="panel">
-    <div class="panel-body">{classification_table}</div>
-  </div>
-</section>
+  <section>
+    <h2>Needs attention</h2>
+    {flag_cards_html}
+  </section>
 
-<section>
-  <h2>3. What each reader sees</h2>
-  <p class="section-desc">Three outputs, three readers, three cadences — all from the same source.</p>
-  <div class="outputs-row">
-    <div class="panel">
-      <div class="panel-head">Daily Slack post</div>
-      <div class="panel-body slack-render">{daily_html}</div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">Weekly rollup</div>
-      <div class="panel-body slack-render">{weekly_html}</div>
-    </div>
-  </div>
-  <div class="panel" style="margin-top: 1rem;">
-    <div class="panel-head">Audit log (sample)</div>
-    <div class="panel-body">{log_table}</div>
-  </div>
-</section>
+  <section>
+    <h2>Corrections applied silently</h2>
+    {correction_cards_html}
+  </section>
 
-<footer>
-  This page is a demo artifact. In production, each surface lives where its reader already works — Slack for the team, Salesforce for the resolution path, the audit log for anyone asking "when did this change and why." Nothing new to adopt.
-</footer>
+  <section>
+    <h2>Held while they stabilize</h2>
+    <div class="held-note">
+      {len(held)} discrepanc{'y' if len(held) == 1 else 'ies'} had changes less than the 4-hour persistence threshold. The engine waits to confirm they persist before acting, so a mid-sync update does not create a false correction. Will re-check next run.
+    </div>
+  </section>
+
+  <section>
+    <h2>Pattern this week</h2>
+    <div class="trend-note">{trend_text}</div>
+  </section>
+
+  <details class="raw-data">
+    <summary>Show raw system state (inputs, color-coded by action)</summary>
+    <div class="raw-tables">
+      <div>
+        <div class="raw-table-title">Salesforce export</div>
+        <div class="raw-table-wrap">{sf_table}</div>
+      </div>
+      <div>
+        <div class="raw-table-title">Mission Control export</div>
+        <div class="raw-table-wrap">{mc_table}</div>
+      </div>
+    </div>
+  </details>
+
+  <footer>
+    Demo artifact. In production, flags route to Salesforce as a custom object, the daily post lands in the Deal Desk Slack channel, and the audit log feeds the warehouse. Nothing new for the team to adopt.
+  </footer>
 
 </div>
 </body>
@@ -829,9 +910,8 @@ def emit_dashboard():
     with open(DASHBOARD_HTML, "w") as f:
         f.write(html)
 
-    return {
-        "dashboard_path": str(DASHBOARD_HTML),
-    }
+    return {"dashboard_path": str(DASHBOARD_HTML)}
+
 # -------------------------------------------------------------------
 # Small helpers used by emit_outputs.
 # -------------------------------------------------------------------
