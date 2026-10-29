@@ -1,6 +1,6 @@
 # Deal Desk Reconciliation
 
-A small reconciliation engine for two systems that don't talk to each other — with an SOP, a human check, and a bias toward silence.
+A small reconciliation engine for two systems that don't talk to each other — with an SOP, a human escape hatch, and a bias toward silence.
 
 ## The problem
 
@@ -72,6 +72,18 @@ Keeping these separate means operators never adopt a new tool to do their work. 
 - No role-based access on who can update the SOP. Contract changes would go through a code review workflow.
 - No historical trend analysis beyond this week vs last week. Pattern analysis across months would be the next layer once the system has enough runs to be worth analyzing.
 - No actual Slack bot — the daily and weekly posts write to text files for the demo. In production this would use a webhook (one function call) or a bot with threading and acknowledgments.
+
+## Upstream intake controls
+
+The engine handles downstream drift. A complete solution also closes the upstream gap: controls at submission so bad data never enters either system in the first place. This section names what that pair looks like. Named here rather than built because these are Salesforce declarative controls, not Python, and belong on the CRM side of the system.
+
+- **Required-field validation rules on the Opportunity object** for the four fields the SOP depends on: contract value, commercial approval status, opportunity owner, and the handoff flag. A record that reaches Mission Control with any of these empty is a near-certain future flag.
+- **Picklist constraints on stage and commercial approval status** so free-text values cannot be entered. Free text at the source is where SOP vocabulary diverges in the first place.
+- **Cross-object validation on the opportunity-to-project link** so a Mission Control project cannot be opened without a Salesforce opportunity ID that has passed the required-field check. This is where "incomplete handoff" starts.
+- **Conditional validation on the handoff flag**: it cannot be set to true unless commercial approval status is Approved and contract value is populated. This single rule would prevent the most common incomplete handoff.
+- **Approval Process on the commercial approval status transition** so approval leaves a timestamped record on the opportunity rather than living in a Slack thread or inbox that nobody can audit later.
+
+Together with this engine, those five controls form the full lifecycle: intake validation prevents what it can, reconciliation catches what slips through, and the audit log is the common record both halves write to.
 
 ## Known limitations and next engineering steps
 
