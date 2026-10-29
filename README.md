@@ -66,6 +66,3 @@ The weekly surface in production wouldn't be a markdown rollup — it'd route in
 
 Next step would be moving the file ingestion to an API-based pull so the engine runs without manual exports. After that, versioning the SOP in git so every rule change has an audit trail. After that, routing the flags into Salesforce as described above and sunsetting the markdown rollup.
 
-## Where this came from
-
-The system lag between Salesloft and Salesforce in my current Stripe role was the daily reality that shaped this — watching sellers work from stale lists while nobody owned fixing it upstream. The Xero churn report rebuild earlier in my career was where I first learned that most data problems are really ownership problems. This project is what I'd build if given the chance to put structure on both.
