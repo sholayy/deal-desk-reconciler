@@ -21,16 +21,27 @@ Most scripted approaches to this fail for a specific reason: scripts that quietl
 
 ```bash
 pip install -r requirements.txt
-python reconcile.py
+python3 reconcile.py
 ```
 
 Outputs land in `/output/`:
-- `slack/slack_YYYY-MM-DD.txt` — the daily Slack message
-- `slack/weekly_YYYY-MM-DD.txt` — the weekly rollup
+- `slack/slack_YYYY-MM-DD.txt` — the daily Slack message (also posted to Slack when configured)
+- `slack/weekly_YYYY-MM-DD.txt` — the weekly rollup (also posted to Slack when configured)
 - `reconciliation_log.json` — the append-only audit log
 - `dashboard.html` — the observability dashboard
 
 Mock input data is in `/data/`. Both CSVs are hand-designed to trigger every scenario the engine handles.
+
+### Optional: post to Slack
+
+Set `SLACK_WEBHOOK_URL` in your environment to post both messages to a real Slack channel:
+
+```bash
+export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
+python3 reconcile.py
+```
+
+The engine always writes the text files locally as the reproducible artifact. The webhook post is additive. If the post fails for any reason (bad URL, network, rate limit) the run completes anyway and prints a warning — the audit log remains the source of truth.
 
 ## What's in the box
 
@@ -73,7 +84,7 @@ Keeping these separate means operators never adopt a new tool to do their work. 
 - No real integration — the engine reads flat files. In production, this would be an API pull or a direct warehouse connection.
 - No role-based access on who can update the SOP. Contract changes would go through a code review workflow.
 - No historical trend analysis beyond this week vs last week. Pattern analysis across months would be the next layer once the system has enough runs to be worth analyzing.
-- No actual Slack bot — the daily and weekly posts write to text files for the demo. In production this would use a webhook (one function call) or a bot with threading and acknowledgments.
+- No Slack bot with threading or acknowledgments — the engine posts via an Incoming Webhook when `SLACK_WEBHOOK_URL` is set. A bot that threads replies, tracks acknowledgments, and routes to the right responder is the next step but out of scope for this prototype.
 
 ## Upstream intake controls
 
