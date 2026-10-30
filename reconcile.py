@@ -21,6 +21,7 @@ from html import escape
 from pathlib import Path
 
 import pandas as pd
+import requests
 import yaml
 from dateutil import parser as date_parser
 
@@ -408,12 +409,16 @@ def emit_outputs(discrepancies):
     lines.append(f"Weekly rollup: output/slack/weekly_{RUN_DATE_STR}.txt")
 
     slack_path = SLACK_DIR / f"slack_{RUN_DATE_STR}.txt"
+    message_body = "\n".join(lines)
     with open(slack_path, "w") as f:
-        f.write("\n".join(lines))
+        f.write(message_body)
+
+    slack_posted = _post_to_slack(message_body)
 
     return {
         "log_entries_written": len(log_entries),
         "slack_message_path": str(slack_path),
+        "slack_posted": slack_posted,
         "flags": len(flags),
         "auto_corrections": len(auto_corrections),
         "held": len(held),
@@ -500,11 +505,15 @@ def emit_weekly_rollup():
     lines.append("Runbook: runbook.md")
 
     weekly_path = SLACK_DIR / f"weekly_{RUN_DATE_STR}.txt"
+    weekly_body = "\n".join(lines)
     with open(weekly_path, "w") as f:
-        f.write("\n".join(lines))
+        f.write(weekly_body)
+
+    slack_posted = _post_to_slack(weekly_body)
 
     return {
         "weekly_message_path": str(weekly_path),
+        "slack_posted": slack_posted,
         "entries_covered": len(recent),
         "fields_drifting": dict(recency_fields),
         "gaps_open": list(gaps_this_week),
@@ -1133,6 +1142,30 @@ def _build_opp_link(opp_id, sf_record_id):
     return opp_id
 
 
+def _post_to_slack(message):
+    """
+    Post a message to Slack via Incoming Webhook when SLACK_WEBHOOK_URL is
+    set in the environment. Returns True on success, False on any failure
+    or when the webhook is not configured. Never raises: the local text
+    file write and the audit log are the sources of truth, so a failed
+    notification should not abort the run.
+    """
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+    if not webhook_url:
+        return False
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"text": message},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except Exception as exc:
+        print(f"  Warning: Slack webhook post failed: {exc}")
+        return False
+
+
 # -------------------------------------------------------------------
 # Entry point
 # -------------------------------------------------------------------
@@ -1153,7 +1186,8 @@ if __name__ == "__main__":
 
     print(f"\nRun complete. (run_id: {RUN_ID[:8]}...)")
     print(f"  Log entries written: {result['log_entries_written']}")
-    print(f"  Slack message: {result['slack_message_path']}")
+    posted_suffix = " (posted to Slack)" if result.get("slack_posted") else " (webhook not configured)"
+    print(f"  Slack message: {result['slack_message_path']}{posted_suffix}")
     print(f"  Flags: {result['flags']}")
     print(f"  Corrections proposed: {result['auto_corrections']}")
     print(f"  Held: {result['held']}")
