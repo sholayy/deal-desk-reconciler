@@ -43,6 +43,15 @@ python3 reconcile.py
 
 The engine always writes the text files locally as the reproducible artifact. The webhook post is additive. If the post fails for any reason (bad URL, network, rate limit) the run completes anyway and prints a warning — the audit log remains the source of truth.
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Eleven unit tests cover the classifier: ownership rules in both directions, recency rules in both directions, the persistence threshold on field discrepancies and on missing records, missing records in both directions, contract gaps, matching values that produce nothing, and null-value handling. The classifier is the one place where the SOP is applied, so it's the one place that most needs regression protection.
+
 ## What's in the box
 
 ```
@@ -53,6 +62,9 @@ field_mapping.yaml        # Salesforce ↔ Mission Control field name translatio
 runbook.md                # human playbook for what to do when the engine flags
 data/                     # mock Salesforce and Mission Control exports
 output/                   # generated outputs (Slack messages, dashboard, JSON log)
+tests/                    # pytest unit tests for the classifier
+requirements.txt          # runtime dependencies
+requirements-dev.txt      # runtime + pytest
 ```
 
 ## Design decisions worth naming
@@ -105,7 +117,7 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 - **No write-back layer.** The engine classifies and proposes corrections based on the SOP. It does not currently update Salesforce or Mission Control. Dashboard and Slack labels reflect this ("proposed" not "applied"). Next step: a write-back module with explicit `execution_status` tracking (proposed → applied → failed) and dry-run mode as the default. The audit log is the source of truth that layer would read from.
 - **Recency uses record-level timestamps.** Comparing `last_modified_ts_sf` and `last_modified_ts_mc` doesn't tell you which specific field changed most recently. A newer owner update doesn't mean the contract value is newer. Field-level change history is the proper fix. Until then, treat recency decisions as directional and favor the ownership rule where ambiguity matters.
 - **Missing field values are skipped silently.** When either side's value is `NaN`, the comparison is bypassed. That hides real data quality problems. The right fix: track skipped comparisons as a separate category and surface them in the weekly rollup.
-- **No automated tests.** The mock CSVs are useful test fixtures. First test coverage would be: missing records in both directions, matching fields, ownership rules, recency ties, missing values, timestamp boundary conditions, repeat runs, contract gaps, run_id dedupe.
+- **Test coverage is classifier-only.** The classifier has unit tests, but `emit_outputs`, `emit_weekly_rollup`, and `emit_dashboard` don't yet. Next step: integration tests that run the engine against a fixture directory and assert on the output files.
 
 ## How I'd evolve it
 
