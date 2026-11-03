@@ -630,9 +630,30 @@ def emit_weekly_rollup():
     # system is telling you about. Not whack-a-mole, root cause. Each one
     # carries its root-cause category so the reader can group by the kind
     # of structural fix needed, not just by which record tripped.
+    #
+    # If a prior-week entry for the same incident has a resolution record,
+    # that is a stated fix that did not hold. Call it out explicitly, because
+    # a resolution that did not prevent recurrence is more actionable than
+    # a resolution that worked (which would already have closed the incident).
+    def _latest_resolution_in(entries):
+        """Return the most recent resolution object across these entries, or None."""
+        resolved = [e for e in entries if e.get("resolution")]
+        if not resolved:
+            return None
+        return max(resolved, key=lambda e: e["resolution"].get("resolved_at", ""))["resolution"]
+
     if recurring_keys:
         lines.append("*Recurring incidents — root cause required:*")
+        recurring_without_prior_fix = []
+        recurring_with_failed_prior_fix = []
         for key in sorted(recurring_keys):
+            prior_resolution = _latest_resolution_in(prior_week_incidents[key])
+            if prior_resolution:
+                recurring_with_failed_prior_fix.append((key, prior_resolution))
+            else:
+                recurring_without_prior_fix.append(key)
+
+        for key in recurring_without_prior_fix:
             opp_id, concept, bucket = key
             this_count = len(this_week_incidents[key])
             prior_count = len(prior_week_incidents[key])
@@ -640,7 +661,22 @@ def emit_weekly_rollup():
             lines.append(
                 f"  • {_incident_label(opp_id, concept, bucket)} "
                 f"[{category}]: "
-                f"{this_count} observations this week, {prior_count} last week"
+                f"{this_count} observations this week, {prior_count} last week · "
+                f"root cause not yet captured"
+            )
+
+        for key, prior_resolution in recurring_with_failed_prior_fix:
+            opp_id, concept, bucket = key
+            this_count = len(this_week_incidents[key])
+            prior_count = len(prior_week_incidents[key])
+            category = this_week_incidents[key][0].get("root_cause_category") or "uncategorized"
+            lines.append(
+                f"  • {_incident_label(opp_id, concept, bucket)} "
+                f"[{category}]: "
+                f"{this_count} observations this week, {prior_count} last week · "
+                f"PRIOR FIX DID NOT HOLD · "
+                f"was: \"{prior_resolution.get('corrective_action')}\" "
+                f"(by {prior_resolution.get('responsible_team', 'unknown team')})"
             )
         lines.append("")
 
@@ -657,6 +693,14 @@ def emit_weekly_rollup():
                 lines.append(
                     f"  • {category}: {count} recurring {'incident' if count == 1 else 'incidents'}"
                 )
+            lines.append("")
+
+        if recurring_with_failed_prior_fix:
+            lines.append(
+                f"_{len(recurring_with_failed_prior_fix)} recurring {'incident has' if len(recurring_with_failed_prior_fix) == 1 else 'incidents have'} "
+                f"a documented prior fix that did not prevent recurrence. "
+                f"Either the fix was never actually deployed, or it did not address the real cause._"
+            )
             lines.append("")
 
     # New this week: present now, absent last week.
@@ -853,6 +897,22 @@ def emit_dashboard():
     # Filter to only this run so repeat executions don't inflate counts.
     todays_entries = [e for e in log if e.get("run_id") == RUN_ID]
 
+    # Build a map of prior resolutions, keyed by (opp_id, concept, bucket).
+    # When an incident recurs after a documented fix, the dashboard flag card
+    # surfaces the prior resolution so the viewer sees "fix did not hold"
+    # rather than treating the recurrence as a first occurrence.
+    prior_resolutions = {}
+    for entry in log:
+        if entry.get("run_id") == RUN_ID:
+            continue
+        resolution = entry.get("resolution")
+        if not resolution:
+            continue
+        key = (entry.get("opportunity_id"), entry.get("concept"), entry.get("bucket"))
+        existing = prior_resolutions.get(key)
+        if not existing or resolution.get("resolved_at", "") > existing.get("resolved_at", ""):
+            prior_resolutions[key] = resolution
+
     opp_customer = dict(zip(sf_df["opportunity_id"], sf_df["customer_name"]))
     opp_sf_record = dict(zip(sf_df["opportunity_id"], sf_df["sf_record_id"]))
 
@@ -909,6 +969,25 @@ def emit_dashboard():
             action = "SOP has not named an owner for this field. Decide and update contract.yaml."
             runbook = "Contract gap"
         root_cause_html = _root_cause_line(f.get("root_cause_category"), f.get("likely_source"))
+
+        # If this exact (opp, concept, bucket) was resolved in a prior run,
+        # the fix did not hold. Surface it explicitly.
+        prior_resolution = prior_resolutions.get(
+            (f.get("opportunity_id"), f.get("concept"), f.get("bucket"))
+        )
+        prior_resolution_html = ""
+        if prior_resolution:
+            resolved_date = (prior_resolution.get("resolved_at") or "")[:10]
+            team = prior_resolution.get("responsible_team") or "unknown team"
+            fix = prior_resolution.get("corrective_action") or ""
+            prior_resolution_html = (
+                f'<div class="prior-resolution">'
+                f'<strong>Prior fix did not hold.</strong> '
+                f'Resolved on {_h(resolved_date)} by {_h(team)}: '
+                f'<em>&ldquo;{_h(fix)}&rdquo;</em>'
+                f'</div>'
+            )
+
         return f"""
         <article class="card card-flag">
           <div class="card-top">
@@ -920,6 +999,7 @@ def emit_dashboard():
           </div>
           <p class="card-action">{action}</p>
           {root_cause_html}
+          {prior_resolution_html}
           <div class="card-meta">Runbook: {_h(runbook)}</div>
         </article>
         """
@@ -1140,6 +1220,18 @@ def emit_dashboard():
   .pill-rootcause {{ background: #f3eef9; color: #6a4a95; }}
   .card-rootcause {{ margin: 10px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
   .rootcause-text {{ font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }}
+  .prior-resolution {{
+    margin: 10px 0 0;
+    padding: 10px 12px;
+    background: var(--red-bg);
+    border-left: 2px solid var(--red);
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--red-text);
+    line-height: 1.5;
+  }}
+  .prior-resolution strong {{ color: var(--red-text); font-weight: 650; }}
+  .prior-resolution em {{ color: #7a3a2a; font-style: italic; }}
   .values {{
     display: grid;
     grid-template-columns: 1fr auto 1fr;
