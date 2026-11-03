@@ -757,7 +757,7 @@ def emit_weekly_rollup():
                 f"[possible: {category}]: "
                 f"{this_count} observations this week, {prior_count} last week · "
                 f"{first_detected_str} · "
-                f"PRIOR FIX DID NOT HOLD · "
+                f"STILL DETECTED AFTER RECORDED FIX · "
                 f"confirmed cause: \"{confirmed_cause}\", "
                 f"action taken: \"{prior_resolution.get('corrective_action')}\" "
                 f"(by {prior_resolution.get('responsible_team', 'unknown team')})"
@@ -781,9 +781,10 @@ def emit_weekly_rollup():
 
         if recurring_with_failed_prior_fix:
             lines.append(
-                f"_{len(recurring_with_failed_prior_fix)} recurring {'incident has' if len(recurring_with_failed_prior_fix) == 1 else 'incidents have'} "
-                f"a documented prior fix that did not prevent recurrence. "
-                f"Investigate deployment and the stated root cause before drawing conclusions._"
+                f"_{len(recurring_with_failed_prior_fix)} recurring {'incident is' if len(recurring_with_failed_prior_fix) == 1 else 'incidents are'} "
+                f"still detected after a recorded resolution. "
+                f"This is a signal to investigate, not a conclusion that the fix failed. "
+                f"Confirm deployment and look for new triggering events before drawing conclusions._"
             )
             lines.append("")
 
@@ -1064,10 +1065,11 @@ def emit_dashboard():
             fix = prior_resolution.get("corrective_action") or ""
             prior_resolution_html = (
                 f'<div class="prior-resolution">'
-                f'<strong>Prior fix did not hold.</strong> '
+                f'<strong>Still detected after recorded resolution.</strong> '
                 f'Resolved on {_h(resolved_date)} by {_h(team)}.<br>'
                 f'<span class="prior-label">Confirmed cause:</span> {_h(confirmed_cause)}<br>'
-                f'<span class="prior-label">Action taken:</span> <em>&ldquo;{_h(fix)}&rdquo;</em>'
+                f'<span class="prior-label">Action taken:</span> <em>&ldquo;{_h(fix)}&rdquo;</em><br>'
+                f'<span class="prior-note">Does not prove the fix failed. Confirm the fix was deployed and investigate for a new triggering event.</span>'
                 f'</div>'
             )
 
@@ -1316,6 +1318,7 @@ def emit_dashboard():
   .prior-resolution strong {{ color: var(--red-text); font-weight: 650; }}
   .prior-resolution em {{ color: #7a3a2a; font-style: italic; }}
   .prior-label {{ color: #7a3a2a; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 4px; }}
+  .prior-note {{ display: block; margin-top: 6px; font-size: 11px; color: #7a3a2a; font-style: italic; opacity: 0.85; }}
   .values {{
     display: grid;
     grid-template-columns: 1fr auto 1fr;

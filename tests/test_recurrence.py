@@ -48,7 +48,7 @@ def test_future_resolution_is_not_failed_fix(isolated_outputs, monkeypatch):
     reconcile.AUDIT_LOG.write_text(json.dumps(data))
     reconcile.emit_dashboard()
     html = reconcile.DASHBOARD_HTML.read_text()
-    assert 'Prior fix did not hold' not in html
+    assert 'Still detected after recorded resolution' not in html
 
 
 def test_real_post_resolution_repeat_is_flagged(isolated_outputs, monkeypatch):
@@ -61,7 +61,7 @@ def test_real_post_resolution_repeat_is_flagged(isolated_outputs, monkeypatch):
     reconcile.AUDIT_LOG.write_text(json.dumps(data))
     reconcile.emit_dashboard()
     html = reconcile.DASHBOARD_HTML.read_text()
-    assert 'Prior fix did not hold' in html
+    assert 'Still detected after recorded resolution' in html
     assert 'Fixed trigger' in html
 
 
@@ -85,7 +85,7 @@ def test_weekly_rollup_does_not_claim_future_fix_failed(isolated_outputs, monkey
     reconcile.AUDIT_LOG.write_text(json.dumps(data))
     reconcile.emit_weekly_rollup()
     weekly = (isolated_outputs / 'slack' / 'weekly_2026-11-02.txt').read_text()
-    assert 'PRIOR FIX DID NOT HOLD' not in weekly
+    assert 'STILL DETECTED AFTER RECORDED FIX' not in weekly
     assert 'root cause not yet captured' in weekly
 
 
