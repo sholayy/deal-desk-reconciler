@@ -137,11 +137,11 @@ These are structural observations surfaced during this build. They're kept out o
 
 **A. The handoff flag should be a state machine, not a boolean match.**
 
-The SOP currently compares `handoff_submitted` and `handoff_received`. These are different events, not two sides of the same fact. A better design is a lifecycle: `Not Submitted → Submitted → Acknowledged → Accepted`, with `Returned for Rework` as a separate status. A submitted-but-unacknowledged handoff is not a data-quality issue. It becomes an operational exception only once it exceeds an acknowledgment SLA. The current boolean comparison surfaces every unacknowledged handoff as drift, which is noise.
+The SOP currently compares `handoff_submitted` and `handoff_received`. These are different events, not two sides of the same fact. A better design is a lifecycle (`Not Submitted → Submitted → Acknowledged → Accepted`, with `Returned for Rework` as its own status). An unacknowledged handoff is not a data-quality issue; it becomes an exception only once it exceeds an acknowledgment SLA.
 
 **B. Contract-value drift needs a true source of truth, not a recency rule.**
 
-The current recency rule picks the system with the newer record-level timestamp. A newer timestamp does not prove the contract value itself was updated more recently. The stronger long-term fix is an approved contract version with an effective date and a single authoritative commercial source. Changes to contract value propagate from the authoritative source through a controlled update process. This engine's reconciliation then becomes a safety net rather than the primary mechanism for deciding which value is correct.
+The recency rule picks the system with the newer record-level timestamp, but a newer timestamp does not prove the contract value itself changed more recently. The stronger fix is an approved contract version with an effective date and a single authoritative commercial source. Reconciliation then becomes a safety net rather than the primary mechanism for deciding which value is correct.
 
 ## Known limitations and next engineering steps
 
@@ -150,13 +150,8 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 - **No write-back layer.** The engine classifies and proposes corrections based on the SOP. It does not currently update Salesforce or Mission Control. Dashboard and Slack labels reflect this ("proposed" not "applied"). Next step: a write-back module with explicit `execution_status` tracking (proposed → applied → failed) and dry-run mode as the default. The audit log is the source of truth that layer would read from.
 - **Recency uses record-level timestamps.** See Process-design opportunity B. Field-level change history or an authoritative contract version source are both proper fixes. Until then, favor the ownership rule where ambiguity matters.
 - **Missing field values are skipped silently.** When either side's value is `NaN`, the comparison is bypassed. That hides real data quality problems. The right fix: track skipped comparisons as a separate category and surface them in the weekly rollup.
-- **Persistence thresholds are informed guesses.** The 1h / 24h / 4h defaults in `contract.yaml` are not empirically derived. In a real deployment they would be set at the 95th percentile of observed sync lag per bucket, measured from the audit log over the first few weeks of operation.
 - **No resolution-notes workflow.** The audit log records what the engine saw, not what the human did next. Adding a `resolution_notes` field plus a small CLI for appending them would let the weekly rollup surface recurring flags with no captured root cause (highest priority to investigate) separately from recurring flags with notes (pattern worth analyzing).
 - **Test coverage is classifier-only.** The classifier has unit tests, but `emit_outputs`, `emit_weekly_rollup`, and `emit_dashboard` don't yet. Next step: integration tests that run the engine against a fixture directory and assert on the output files.
-
-## How I'd evolve it
-
-Next step would be moving the file ingestion to an API-based pull so the engine runs without manual exports. After that, the write-back layer with dry-run default. After that, versioning the SOP in git so every rule change has an audit trail. After that, routing the flags into Salesforce as described above and sunsetting the markdown rollup.
 
 ## Guiding principle
 
