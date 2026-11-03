@@ -6,7 +6,6 @@
 
 *<https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK13/view|OPP-013>* — handoff_flag fields disagree between systems. SOP does not name an owner. Runbook: Contract gap.
 
-3 corrections proposed by rule.
-(2 held below persistence threshold.)
+5 corrections proposed by rule.
 
 Weekly rollup: output/slack/weekly_2026-10-28.txt

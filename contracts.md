@@ -65,9 +65,14 @@ Every discrepancy classifies into one of four buckets and is handled accordingly
 
 4. **Contract gap** — Fields disagree but the SOP has not named an owner. No auto-resolution. Flags in Slack with a note that the SOP needs updating. These are a priority signal for the Deal Desk ops sync.
 
-## Persistence Threshold
+## Persistence thresholds
 
-No action is taken on any discrepancy where the most recent update on either side is less than 4 hours old. The reason: data entered minutes ago may not have propagated yet, and acting on it would create false corrections.
+Discrepancies that are "fresh" are held, not flagged. Different buckets have different natural latencies, so they get different thresholds.
+
+- Field discrepancies: 1 hour. Field updates should propagate between systems in minutes. One hour is a generous ceiling that still catches real drift.
+- Missing records: 24 hours. Opening a Mission Control project after a Salesforce approval is a human action, not an automated sync. Twenty-four hours lets the EPM finish the handoff before the engine escalates.
+
+Both numbers are informed guesses, not empirical values. The right long-term approach is to measure sync lag per bucket from the audit log over the first few weeks and set each threshold at the 95th percentile of observed lag.
 
 Discrepancies below the threshold are logged as "held for next run" and re-evaluated at the next run. The 4-hour threshold reflects the typical sync lag observed across the two systems. Reviewed quarterly.
 
