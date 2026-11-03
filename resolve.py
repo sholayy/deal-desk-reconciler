@@ -1,5 +1,5 @@
 """
-resolve.py — append a resolution record to an audit log entry.
+resolve.py — attach a resolution to a previously observed incident.
 
 The audit log captures what the engine saw. This script captures what the
 human did about it afterward: the confirmed root cause, the structural fix
@@ -27,11 +27,10 @@ Options:
     --log-path               Path to the audit log. Defaults to output/reconciliation_log.json.
 
 Behavior:
-    Finds the most recent audit log entry matching OPP_ID plus any optional
-    filters, writes a 'resolution' object onto that entry in-place, and
-    prints what it recorded. If multiple entries match on the same run_id,
-    all of them get the same resolution record because they represent one
-    incident observed by the engine.
+    Finds the most recent flagged incident matching OPP_ID and optional
+    filters. Requires a specific bucket/concept when multiple incidents match;
+    updates the resolution metadata for only the selected incident.
+    The original observation is preserved.
 """
 
 import argparse
@@ -39,6 +38,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from dateutil import parser as date_parser
 from pathlib import Path
 
 
@@ -62,9 +62,10 @@ def main():
         default=None,
         help=(
             "ISO 8601 timestamp for when the resolution was applied. "
-            "Defaults to the current wall-clock time (UTC). Can be set to a "
-            "historical timestamp to backdate resolutions, which matters when "
-            "the engine runs against a simulated_now that itself is historical."
+            "Defaults to the current wall-clock time (UTC). The value must "
+            "be strictly after the original observation. Backdating is "
+            "allowed when the engine runs against a historical simulated_now "
+            "so the full detect-fix-recur loop can be demonstrated end to end."
         ),
     )
     parser.add_argument(
@@ -85,7 +86,10 @@ def main():
     # Find candidate entries. Filter by opp_id first, then by bucket/concept
     # if provided. Keep the newest run_id so re-resolving the same incident
     # updates the most recent observation rather than an old one.
-    candidates = [e for e in log if e.get("opportunity_id") == args.opp_id]
+    candidates = [
+        e for e in log
+        if e.get("opportunity_id") == args.opp_id and e.get("action") == "flag"
+    ]
     if args.bucket:
         candidates = [e for e in candidates if e.get("bucket") == args.bucket]
     if args.concept:
@@ -101,12 +105,48 @@ def main():
         )
         sys.exit(1)
 
-    # Pick the most recent run.
-    newest = max(candidates, key=lambda e: e.get("run_timestamp", ""))
+    # Select the latest recorded observation, breaking simulated timestamp
+    # ties by audit-log append order. Avoid changing multiple independent
+    # discrepancies on the same opportunity by accident.
+    newest = max(enumerate(candidates), key=lambda x: (x[1].get("run_timestamp", ""), x[0]))[1]
     target_run_id = newest.get("run_id")
+    active = [e for e in candidates if e.get("run_id") == target_run_id]
+    identities = {(e.get("concept"), e.get("bucket")) for e in active}
+    if len(identities) > 1:
+        print("Multiple flagged incidents match. Specify --bucket and/or --concept.", file=sys.stderr)
+        sys.exit(2)
+
+    now = datetime.now(timezone.utc)
+    observed_at = date_parser.parse(newest["run_timestamp"])
+    if observed_at.tzinfo is None:
+        print("Cannot resolve an observation whose timestamp lacks a timezone.", file=sys.stderr)
+        sys.exit(2)
+
+    # Pick the resolution timestamp. Default is wall-clock now; --resolved-at
+    # overrides. Enforce that the resolution timestamp is strictly after the
+    # original observation so chronology stays sound in both directions.
+    if args.resolved_at:
+        try:
+            resolved_at = date_parser.parse(args.resolved_at)
+        except (ValueError, TypeError, OverflowError):
+            print(f"Could not parse --resolved-at: {args.resolved_at}", file=sys.stderr)
+            sys.exit(2)
+        if resolved_at.tzinfo is None:
+            print("--resolved-at must include a timezone (e.g. 2026-10-27T00:00:00Z).", file=sys.stderr)
+            sys.exit(2)
+    else:
+        resolved_at = now
+
+    if resolved_at <= observed_at:
+        print(
+            "Resolution timestamp must be strictly after the original observation "
+            f"(observed at {observed_at.isoformat()}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     resolution = {
-        "resolved_at": args.resolved_at or datetime.now(timezone.utc).isoformat(),
+        "resolved_at": resolved_at.isoformat(),
         "resolved_by": args.resolved_by,
         "root_cause": args.cause,
         "corrective_action": args.fix,
@@ -124,6 +164,7 @@ def main():
             and entry.get("run_id") == target_run_id
             and (args.bucket is None or entry.get("bucket") == args.bucket)
             and (args.concept is None or entry.get("concept") == args.concept)
+            and entry.get("action") == "flag"
         ):
             entry["resolution"] = resolution
             updated += 1

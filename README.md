@@ -17,10 +17,10 @@ Reconciliation is one stage of a five-stage loop. Naming all five keeps the role
 1. **Prevent** — validate opportunity data, approvals, and handoff requirements at submission so bad data never enters either system.
 2. **Detect** — compare system records and classify every disagreement into one of four buckets. (This engine's primary job.)
 3. **Resolve** — apply the SOP's proposed corrections, or assign exceptions to the accountable owner. (This engine proposes; a write-back layer and human workflow close the loop.)
-4. **Eliminate root cause** — change the validation, workflow, mapping, or policy responsible for recurring failures. This is where the five root-cause categories (`policy_ambiguity`, `workflow_gap`, `upstream_validation_gap`, `sync_lag_or_process_gap`, `pending_stabilization`) point.
-5. **Verify prevention** — measure recurrence, exception volume, and handoff quality to confirm the fix actually worked. (The weekly rollup's "Changes since last week: closed / recurring / new" headline.)
+4. **Eliminate root cause** — change the validation, workflow, mapping, or policy responsible for recurring failures. This is where the five root-cause categories (`policy_ambiguity`, `workflow_gap`, `ownership_or_sync_gap`, `sync_lag_or_process_gap`, `pending_stabilization`) point.
+5. **Verify prevention** — measure recurrence, exception volume, and handoff quality after an implemented fix. A quiet week is an encouraging signal but does not alone prove that a preventive action worked.
 
-An implemented control is not necessarily a successful control. The weekly rollup is where evidence of success lives.
+An implemented control is not necessarily a successful control. The weekly rollup provides early signals, but genuine verification requires documented remediation and enough post-fix monitoring to establish whether the failure mode recurs.
 
 ## How this handles it
 
@@ -29,7 +29,7 @@ An implemented control is not necessarily a successful control. The weekly rollu
 - Every discrepancy gets a root-cause category so the weekly rollup can group recurring incidents by the kind of structural fix each one needs.
 - Per-bucket persistence thresholds filter out mid-sync lag (field discrepancies) and workflow lag (missing records). Field changes should propagate between systems in minutes; opening a new Mission Control project after a Salesforce approval is a human action that can take a day. One threshold for both would be too coarse.
 - Three output surfaces: a daily Slack message, an incident-lifecycle weekly rollup, and an always-on JSON audit log. Each serves a different reader on a different cadence.
-- The weekly rollup separates new, recurring, and closed incidents. Recurring is the design-problem signal; closed is the system reporting on its own progress toward obsolescence.
+- The weekly rollup separates new, recurring, and not-observed-this-week incidents. Recurrence is an investigation signal; absence alone does not establish a permanent fix.
 
 ## Quick start
 
@@ -41,7 +41,7 @@ python3 reconcile.py
 Outputs land in `/output/`:
 - `slack/slack_YYYY-MM-DD.txt` — the daily Slack message (also posted to Slack when configured)
 - `slack/weekly_YYYY-MM-DD.txt` — the weekly rollup (also posted to Slack when configured)
-- `reconciliation_log.json` — the append-only audit log
+- `reconciliation_log.json` — observation history plus resolution annotations (not immutable)
 - `dashboard.html` — the observability dashboard
 
 Mock input data is in `/data/`. Both CSVs are hand-designed to trigger every scenario the engine handles.
@@ -68,17 +68,28 @@ python3 resolve.py OPP-012 \
     --team "Deal Desk Automation"
 ```
 
-If the engine then runs again *after* the resolution timestamp and the same incident still appears, the dashboard flag card surfaces the prior resolution with "Prior fix did not hold" (showing confirmed cause, team, and action taken) and the weekly rollup labels the recurring incident as a stated fix that did not prevent recurrence. Resolutions that silently work show up as closed incidents in the weekly rollup; resolutions that do not work are called out explicitly.
+If the same incident is observed after a documented resolution, the dashboard surfaces "Prior fix did not hold" and the weekly rollup labels the recurring incident as a stated fix that did not prevent recurrence. Both surfaces display the confirmed root cause the human captured alongside the corrective action.
 
-**Chronology matters.** The "did not hold" check only fires when the current run's timestamp is strictly after the resolution's `resolved_at`. A resolution recorded after the current run's observation cannot have failed during that run, so the engine refuses to make that claim. If you are testing the full loop with the mock data (whose `simulated_now` is historical), pass `--resolved-at` with a date before `simulated_now`:
+**Chronology is enforced.** The check requires valid ordering: `original observation < resolution < repeated observation`. A resolution dated before the original observation or after the current one cannot trigger a failed-fix warning. Incidents absent from a subsequent week are reported as not observed, not automatically verified as fixed.
+
+**Demo flow — three commands, no YAML editing.** To demonstrate the full detect-fix-recur loop end to end against the mock data, use `--resolved-at` on the resolution and `--now` on the second reconciliation to override `simulated_now` in `contract.yaml`:
 
 ```bash
+# 1. Initial reconciliation at simulated_now
+python3 reconcile.py --now "2026-10-28T13:30:00Z"
+
+# 2. Capture a resolution dated after the first run
 python3 resolve.py OPP-012 \
-    --resolved-at "2026-10-27T00:00:00Z" \
+    --resolved-at "2026-10-29T00:00:00Z" \
     --cause "Handoff Flow trigger did not fire for API-driven approvals" \
     --fix "Updated Flow trigger to listen for API events in addition to UI events" \
     --team "Deal Desk Automation"
+
+# 3. Re-run at a later simulated time so the current observation post-dates the fix
+python3 reconcile.py --now "2026-10-30T13:30:00Z"
 ```
+
+Open `output/dashboard.html` and the OPP-012 card now carries the red "Prior fix did not hold" box with the resolution date, team, confirmed cause, and the corrective action that did not hold.
 
 ## Tests
 
@@ -87,7 +98,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Eleven unit tests cover the classifier: ownership rules in both directions, recency rules in both directions, the persistence threshold on field discrepancies and on missing records, missing records in both directions, contract gaps, matching values that produce nothing, and null-value handling. The classifier is the one place where the SOP is applied, so it's the one place that most needs regression protection.
+Eleven original unit tests cover the classifier: ownership rules in both directions, recency rules in both directions, the persistence threshold on field discrepancies and on missing records, missing records in both directions, contract gaps, matching values that produce nothing, and null-value handling. Six additional regression tests cover resolution chronology, true post-resolution recurrence, invalid dates, missing-record lifecycle identity, weekly warning accuracy, and simulated-run deduplication. The classifier and incident history are the key places that need regression protection.
 
 ## What's in the box
 
@@ -113,17 +124,17 @@ requirements-dev.txt      # runtime + pytest
 
 **The engine refuses to auto-create missing records.** Opening a Mission Control record implies committing delivery resources and a start date. That's a human decision, not a data decision. The engine flags; humans act.
 
-**Each discrepancy carries a suspected root-cause category.** Five categories, one per bucket: `policy_ambiguity` (contract gap), `workflow_gap` (missing record), `upstream_validation_gap` (owned-field drift), `sync_lag_or_process_gap` (shared-field drift), `pending_stabilization` (held). These are heuristics the engine applies by bucket type, not findings from investigation. The dashboard and weekly rollup carry the "Likely cause" and "suspected" framing so a reader never mistakes the engine's hypothesis for a confirmed root cause. When a human resolves an incident through `resolve.py`, the `--cause` they pass is the confirmed root cause; the dashboard's "Prior fix did not hold" box shows that confirmed cause alongside the corrective action, so the distinction between hypothesis and finding stays visible after the fact.
+**Each discrepancy carries a *possible* root-cause category, not an established diagnosis.** Categories provide hypotheses for investigation: `policy_ambiguity` (contract gap), `workflow_gap` (missing record), `ownership_or_sync_gap` (owned-field drift), `sync_lag_or_process_gap` (shared-field drift), `pending_stabilization` (held). The category points at the kind of structural fix each class of incident needs. The weekly rollup groups recurring incidents by category so a reviewer sees which category of fix would retire the most incidents at once.
 
 **Per-bucket persistence thresholds, not one global number.** Field discrepancies and missing records represent different kinds of latency. A field update should propagate between systems in minutes. Opening a new Mission Control project after a Salesforce approval is a human action that can take a day. One threshold for both would create false corrections on fresh field edits or long holds on legitimately missing records. The current defaults (1h for fields, 24h for missing records) are informed guesses; in a real deployment they would be set at the 95th percentile of observed sync lag per bucket, measured empirically.
 
 **Daily Slack post + weekly rollup, no operational dashboard.** Ops teams live in Slack. A separate dashboard as a task-management tool is a new habit nobody wants. The dashboard exists only as observability — a monitoring surface for people who want to understand the system, not operate it.
 
-**The weekly rollup is organized by incident lifecycle, not observation count.** An incident is a unique `(opportunity_id, concept, bucket)` triple. One incident firing five days in a row is one incident with five observations, not five incidents. The rollup separates new, recurring (observed both weeks), and closed (last week but not this week). Direction (improving / stable / worsening) is the headline signal. Each recurring incident also carries a `first detected` date from the full audit log so the reader sees how long each problem has existed, and a prior-resolution annotation when applicable so a stated fix that did not hold stands apart from a problem whose root cause has never been investigated. This is the "verify prevention" stage of the operating model turned into a weekly text file.
+**The weekly rollup is organized by incident lifecycle, not observation count.** Incidents use a normalized identity across a field/record moving from held to actionable, so stabilization does not look like one incident closing and another opening. One incident firing five days in a row has five observations, not five independent incidents. The rollup separates new, recurring (observed both weeks), and not observed this week. Direction is a preliminary signal, not proof of prevention. Replays using identical simulated timestamps retain the last appended run per day.
 
 **Each run has a unique `run_id`.** Repeat executions on the same day don't inflate dashboard or weekly counts. Downstream views filter by the current run or by the latest run per day.
 
-**Resolutions get captured through a CLI, not a UI.** The engine's audit log records what it saw. `resolve.py` records what the human did about it: confirmed root cause, corrective action, responsible team. A CLI (rather than a web form) matches how ops engineers actually work and keeps the system scriptable. The weekly rollup and dashboard both read resolution data to answer the real question: did the fix hold? A resolution recorded but followed by recurrence is more actionable than silence, because it tells the team their stated fix was not the real fix.
+**Resolutions get captured through a CLI, not a UI.** The engine's audit log records what it saw. `resolve.py` records what the human did about it: confirmed root cause, corrective action, responsible team. A CLI (rather than a web form) matches how ops engineers actually work and keeps the system scriptable. The weekly rollup and dashboard both read resolution data to answer the real question: did the fix hold? A resolution followed by a **later observation** is a reason to revisit the proposed preventive action. The CLI updates resolution metadata on an observation (so the log is not strictly immutable); it does not edit the source systems.
 
 ## Where each surface lives in production
 
@@ -151,8 +162,8 @@ The engine handles downstream drift. A complete solution closes the upstream gap
 | Missing Mission Control records (`workflow_gap`) | Automated handoff trigger that opens the Mission Control project when commercial approval status flips to Approved | % of approved deals with a confirmed delivery record within SLA |
 | Inconsistent contract values (`sync_lag_or_process_gap`) | Controlled contract versioning with effective dates and an authoritative commercial source | Contract-value mismatch rate across the open-opportunity population |
 | Unacknowledged handoffs | Explicit acknowledgment workflow with an acknowledgment SLA (see Process-design opportunities below) | % of handoffs acknowledged within SLA |
-| Missing required information at submission (`upstream_validation_gap`) | Required-field validation rules on the Opportunity object for the four SOP-governed fields: contract value, commercial approval status, opportunity owner, handoff flag | First-pass handoff acceptance rate |
-| Free-text drift in commercial fields (`upstream_validation_gap`) | Picklist constraints on stage and commercial approval status | Rate of SOP-vocabulary mismatches surfaced per week |
+| Missing required information at submission (`ownership_or_sync_gap`) | Required-field validation rules on the Opportunity object for the four SOP-governed fields: contract value, commercial approval status, opportunity owner, handoff flag | First-pass handoff acceptance rate |
+| Free-text drift in commercial fields (`ownership_or_sync_gap`) | Picklist constraints on stage and commercial approval status | Rate of SOP-vocabulary mismatches surfaced per week |
 | Unclear field ownership (`policy_ambiguity`) | Resolve SOP ambiguity and name an accountable owner in `contract.yaml` | Repeat policy-gap incidents in the weekly rollup |
 
 Together with this engine, those controls form the full lifecycle: intake validation prevents what it can, reconciliation catches what slips through, the audit log is the common record, and the weekly rollup measures whether the controls actually reduced recurrence.
@@ -181,3 +192,11 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 ## Guiding principle
 
 Measure success by how few preventable discrepancies the business continues to create, not by how many the engine catches.
+
+## Historical and demo-time safeguards
+
+`contract.yaml` intentionally pins a simulated reconciliation time (`2026-10-28`). `resolve.py` records the real UTC time at which a human records a resolution. A November resolution is **not evidence** of a failed fix in an October report. The dashboard and weekly rollup compare actual ISO timestamps and only label a fix as failed when there is a subsequent observation after the documented resolution.
+
+The engine's observation history is append-oriented, but `resolve.py` annotates previously recorded entries with a resolution object. This is a pragmatic demo workflow rather than a tamper-proof append-only audit store. In production, separate append-only resolution events and verification outcomes from observation data, with actor identity and write permissions.
+
+The current root-cause category is a **hypothesis** based on the discrepancy type. Confirmation requires investigation and the documented root cause captured through `resolve.py`. Preventive success should be evaluated with multiple follow-up runs and metrics, not assumed from one quiet reporting week.

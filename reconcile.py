@@ -5,7 +5,7 @@ Reads daily exports from Salesforce and Mission Control, applies the SOP
 (contract.yaml), and produces three outputs:
   - A daily Slack message (output/slack/)
   - An HTML dashboard (output/dashboard.html)
-  - An append-only JSON audit log (output/reconciliation_log.json)
+  - A JSON observation history (output/reconciliation_log.json); resolve.py adds metadata
 
 The engine proposes corrections based on the SOP; it does not currently
 write back to either source system. See README for the full roadmap.
@@ -57,12 +57,19 @@ RUN_DATE_STR = None
 RUN_ID = None
 
 
-def _set_run_timestamp(contract):
-    """Sets the global run timestamp and a unique run ID."""
+def _set_run_timestamp(contract, override=None):
+    """Sets the global run timestamp and a unique run ID.
+
+    Precedence: an explicit `override` ISO string (from the CLI `--now`)
+    wins over `simulated_now` in contract.yaml, which in turn wins over
+    wall-clock UTC. The override exists so a demo of the full detect-fix-recur
+    loop can be driven from three commands without editing contract.yaml
+    between runs.
+    """
     global RUN_TIMESTAMP, RUN_DATE_STR, RUN_ID
-    simulated = contract.get("simulated_now")
-    if simulated:
-        RUN_TIMESTAMP = date_parser.parse(simulated)
+    source = override or contract.get("simulated_now")
+    if source:
+        RUN_TIMESTAMP = date_parser.parse(source)
     else:
         RUN_TIMESTAMP = datetime.now(timezone.utc)
     RUN_DATE_STR = RUN_TIMESTAMP.strftime("%Y-%m-%d")
@@ -200,8 +207,8 @@ def _root_cause_for(d):
     if bucket == "owned_field":
         system = (d.get("winning_system") or "owning system").replace("_", " ").title()
         return (
-            "upstream_validation_gap",
-            f"Non-owning system holds a different value. {system} is source of truth per SOP.",
+            "ownership_or_sync_gap",
+            f"Non-owning system differs. {system} is the policy owner; investigate sync or data-entry path.",
         )
     if bucket == "shared_field":
         return (
@@ -406,7 +413,7 @@ def classify_discrepancies(joined, contract, mapping):
 
 
 # -------------------------------------------------------------------
-# Emit — writes the audit log (append-only) and the Slack message.
+# Emit — appends observations to the audit log and writes the Slack message.
 # Language is "proposed" throughout, not "applied" — see classifier docstring.
 # -------------------------------------------------------------------
 
@@ -501,7 +508,7 @@ def emit_outputs(discrepancies):
 
 
 # -------------------------------------------------------------------
-# Weekly rollup — organizes by incident lifecycle: new, recurring, closed.
+# Weekly rollup — organizes by incident lifecycle: new, recurring, not observed.
 #
 # An "incident" is a unique (opportunity_id, concept, bucket) triple. One
 # incident can produce many audit log entries if it fires on multiple days
@@ -512,9 +519,60 @@ def emit_outputs(discrepancies):
 #
 # The rollup compares this week to the prior week along two dimensions:
 # which incidents are new, which are chronic (recurring in both weeks),
-# and which closed between weeks. Direction (improving / stable / worsening)
+# and which were not observed between weeks. Direction (improving / stable / worsening)
 # is the headline signal.
 # -------------------------------------------------------------------
+
+def _as_utc_datetime(value):
+    """Parse ISO timestamps consistently; invalid or missing values are not evidence."""
+    if not value:
+        return None
+    try:
+        parsed = date_parser.parse(str(value))
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def _incident_key(entry):
+    """Use a stable identity across held -> flagged state transitions.
+
+    A missing record held for stabilization is the same underlying issue as a
+    missing record later escalated, not a new/closed pair. Other held field
+    discrepancies retain their original identity via concept.
+    """
+    bucket = entry.get("bucket")
+    concept = entry.get("concept")
+    if bucket == "below_threshold":
+        bucket = "missing_record" if concept is None else "field_discrepancy"
+    elif bucket in ("owned_field", "shared_field"):
+        bucket = "field_discrepancy"
+    return (entry.get("opportunity_id"), concept, bucket)
+
+
+def _latest_prior_resolution(entries, observation_timestamp):
+    """Only resolutions *before* an observed repeat can prove a fix did not hold.
+
+    A resolution also must post-date the observation it originally resolved.
+    This prevents synthetic replay dates and malformed audit entries from
+    producing false recurrence warnings.
+    """
+    observed_at = _as_utc_datetime(observation_timestamp)
+    if observed_at is None:
+        return None
+    eligible = []
+    for entry in entries:
+        resolution = entry.get("resolution")
+        if not isinstance(resolution, dict):
+            continue
+        fixed_at = _as_utc_datetime(resolution.get("resolved_at"))
+        original_at = _as_utc_datetime(entry.get("run_timestamp"))
+        if fixed_at and original_at and original_at <= fixed_at < observed_at:
+            eligible.append((fixed_at, resolution))
+    return max(eligible, key=lambda item: item[0])[1] if eligible else None
+
 
 def _incident_label(opp_id, concept, bucket):
     """Human-readable label for an incident triple. Used in the rollup."""
@@ -543,11 +601,11 @@ def emit_weekly_rollup():
     # Two windows: last 7 days (this week) and the 7 days before that (prior week).
     this_week_start = RUN_TIMESTAMP - timedelta(days=7)
     prior_week_start = RUN_TIMESTAMP - timedelta(days=14)
-    this_week_end = RUN_TIMESTAMP + timedelta(days=1)
+    this_week_end = RUN_TIMESTAMP
 
     this_week_raw = [
         e for e in log
-        if this_week_start <= date_parser.parse(e["run_timestamp"]) < this_week_end
+        if this_week_start <= date_parser.parse(e["run_timestamp"]) <= this_week_end
     ]
     prior_week_raw = [
         e for e in log
@@ -564,7 +622,7 @@ def emit_weekly_rollup():
             by_day[e["run_date"]].append(e)
         latest_run_per_day = {}
         for day, day_entries in by_day.items():
-            latest = max(day_entries, key=lambda x: x["run_timestamp"])
+            latest = day_entries[-1]  # append order breaks ties for simulated timestamps
             latest_run_per_day[day] = latest.get("run_id")
         return [
             e for e in entries
@@ -579,7 +637,7 @@ def emit_weekly_rollup():
         incident; its value is the list of audit log entries that observed it."""
         incidents = defaultdict(list)
         for e in entries:
-            key = (e["opportunity_id"], e.get("concept"), e["bucket"])
+            key = _incident_key(e)
             incidents[key].append(e)
         return incidents
 
@@ -611,13 +669,13 @@ def emit_weekly_rollup():
         else:
             direction = "stable"
         lines.append(
-            f"Changes since last week: {len(closed_keys)} closed, "
+            f"Changes since last week: {len(closed_keys)} not observed this week, "
             f"{len(recurring_keys)} recurring, {len(new_keys)} new. "
             f"Direction: {direction}."
         )
         lines.append(
-            "_Prevention check: closed means the specific incident did not recur. "
-            "Recurring means it did. The ratio is the health signal._"
+            "_Prevention check: not observed this week does not prove permanent resolution. "
+            "Verified prevention requires a documented fix and subsequent monitoring._"
         )
     else:
         lines.append(
@@ -631,49 +689,45 @@ def emit_weekly_rollup():
     # carries its root-cause category so the reader can group by the kind
     # of structural fix needed, not just by which record tripped.
     #
-    # First-detected comes from the full audit log, not just the last two
-    # weeks, so the reader sees how long each problem has existed. An
-    # incident that has been firing for six weeks reads differently from
-    # an incident that first appeared last week.
-    #
     # If a prior-week entry for the same incident has a resolution record,
     # that is a stated fix that did not hold. Call it out explicitly, because
     # a resolution that did not prevent recurrence is more actionable than
-    # a resolution that worked (which would already have closed the incident).
-    # The box shows the confirmed root cause (the human's finding) alongside
-    # the corrective action, so the reader sees both what was investigated
-    # and what was done about it.
-    def _latest_resolution_in(entries):
-        """Return the most recent resolution object across these entries, or None."""
-        resolved = [e for e in entries if e.get("resolution")]
-        if not resolved:
-            return None
-        return max(resolved, key=lambda e: e["resolution"].get("resolved_at", ""))["resolution"]
-
-    def _first_detected_date(opp_id, concept, bucket):
-        """Return the earliest run_date in the full log that matches this incident,
-        or None if the incident has no record outside the current window."""
-        matching = [
-            e for e in log
-            if e.get("opportunity_id") == opp_id
-            and e.get("concept") == concept
-            and e.get("bucket") == bucket
-        ]
-        if not matching:
-            return None
-        earliest = min(matching, key=lambda e: e.get("run_timestamp", ""))
-        return earliest.get("run_date")
-
+    # absence of an observation alone does NOT prove the resolution worked.
     if recurring_keys:
         lines.append("*Recurring incidents — root cause required:*")
         recurring_without_prior_fix = []
         recurring_with_failed_prior_fix = []
         for key in sorted(recurring_keys):
-            prior_resolution = _latest_resolution_in(prior_week_incidents[key])
+            current_observations = this_week_incidents[key]
+            # A prior-week resolution counts as a failed fix only if a fresh
+            # observation occurred AFTER the documented resolution.
+            prior_resolution = None
+            for obs in current_observations:
+                candidate = _latest_prior_resolution(
+                    prior_week_incidents[key], obs.get("run_timestamp")
+                )
+                if candidate and (
+                    prior_resolution is None
+                    or _as_utc_datetime(candidate["resolved_at"])
+                    > _as_utc_datetime(prior_resolution["resolved_at"])
+                ):
+                    prior_resolution = candidate
             if prior_resolution:
                 recurring_with_failed_prior_fix.append((key, prior_resolution))
             else:
                 recurring_without_prior_fix.append(key)
+
+        def _first_detected_date(opp_id, concept, bucket):
+            """Earliest run_date across the full log matching this incident identity,
+            using the same normalized key the rest of the rollup uses. Lets a reader
+            see how long a problem has existed. An incident that has been firing
+            for six weeks reads differently from one first observed last week."""
+            target_key = (opp_id, concept, bucket)
+            matching = [e for e in log if _incident_key(e) == target_key]
+            if not matching:
+                return None
+            earliest = min(matching, key=lambda e: e.get("run_timestamp", ""))
+            return earliest.get("run_date")
 
         for key in recurring_without_prior_fix:
             opp_id, concept, bucket = key
@@ -684,8 +738,8 @@ def emit_weekly_rollup():
             first_detected_str = f"first detected {first_detected}" if first_detected else "first detected date unknown"
             lines.append(
                 f"  • {_incident_label(opp_id, concept, bucket)} "
-                f"[suspected: {category}]: "
-                f"{this_count} this week, {prior_count} last week · "
+                f"[possible: {category}]: "
+                f"{this_count} observations this week, {prior_count} last week · "
                 f"{first_detected_str} · "
                 f"root cause not yet captured"
             )
@@ -700,8 +754,8 @@ def emit_weekly_rollup():
             confirmed_cause = prior_resolution.get("root_cause") or "unspecified"
             lines.append(
                 f"  • {_incident_label(opp_id, concept, bucket)} "
-                f"[suspected: {category}]: "
-                f"{this_count} this week, {prior_count} last week · "
+                f"[possible: {category}]: "
+                f"{this_count} observations this week, {prior_count} last week · "
                 f"{first_detected_str} · "
                 f"PRIOR FIX DID NOT HOLD · "
                 f"confirmed cause: \"{confirmed_cause}\", "
@@ -729,7 +783,7 @@ def emit_weekly_rollup():
             lines.append(
                 f"_{len(recurring_with_failed_prior_fix)} recurring {'incident has' if len(recurring_with_failed_prior_fix) == 1 else 'incidents have'} "
                 f"a documented prior fix that did not prevent recurrence. "
-                f"Either the fix was never actually deployed, or it did not address the real cause._"
+                f"Investigate deployment and the stated root cause before drawing conclusions._"
             )
             lines.append("")
 
@@ -746,11 +800,9 @@ def emit_weekly_rollup():
                 lines.append(f"  • {label}")
         lines.append("")
 
-    # Closed this week: present last week, absent now. These are wins. Named
-    # explicitly because the system telling you what stopped happening is as
-    # useful as it telling you what is still happening.
+    # Absent this week: a useful observation, not proof that a root cause was fixed.
     if closed_keys:
-        lines.append("*Closed this week:*")
+        lines.append("*Not observed this week (verify before closing):*")
         for key in sorted(closed_keys):
             opp_id, concept, bucket = key
             lines.append(f"  • {_incident_label(opp_id, concept, bucket)}")
@@ -774,7 +826,8 @@ def emit_weekly_rollup():
         "unique_incidents_prior_week": prior_unique,
         "recurring_count": len(recurring_keys),
         "new_count": len(new_keys),
-        "closed_count": len(closed_keys),
+        "not_observed_count": len(closed_keys),
+        "closed_count": len(closed_keys),  # backward-compatible name
     }
 
 
@@ -856,6 +909,7 @@ def _root_cause_pill(category):
         "policy_ambiguity": "Policy ambiguity",
         "workflow_gap": "Workflow gap",
         "upstream_validation_gap": "Upstream validation gap",
+        "ownership_or_sync_gap": "Ownership or sync gap",
         "sync_lag_or_process_gap": "Sync lag or process gap",
         "pending_stabilization": "Pending stabilization",
     }
@@ -931,27 +985,15 @@ def emit_dashboard():
     todays_entries = [e for e in log if e.get("run_id") == RUN_ID]
 
     # Build a map of prior resolutions, keyed by (opp_id, concept, bucket).
-    # Chronological rule: a resolution only qualifies as "prior fix did not
-    # hold" if its resolved_at is strictly before the current run's timestamp.
-    # Otherwise the current observation pre-dates the fix and cannot be a
-    # recurrence of it. Without this check, running the engine against a
-    # historical simulated_now with a wall-clock resolution would wrongly
-    # claim the fix failed, which is logically incoherent.
-    current_run_iso = RUN_TIMESTAMP.isoformat()
+    # When an incident recurs after a documented fix, the dashboard flag card
+    # surfaces the prior resolution so the viewer sees "fix did not hold"
+    # rather than treating the recurrence as a first occurrence.
     prior_resolutions = {}
     for entry in log:
         if entry.get("run_id") == RUN_ID:
             continue
-        resolution = entry.get("resolution")
-        if not resolution:
-            continue
-        resolved_at = resolution.get("resolved_at", "")
-        if not resolved_at or resolved_at >= current_run_iso:
-            continue
-        key = (entry.get("opportunity_id"), entry.get("concept"), entry.get("bucket"))
-        existing = prior_resolutions.get(key)
-        if not existing or resolved_at > existing.get("resolved_at", ""):
-            prior_resolutions[key] = resolution
+        key = _incident_key(entry)
+        prior_resolutions.setdefault(key, []).append(entry)
 
     opp_customer = dict(zip(sf_df["opportunity_id"], sf_df["customer_name"]))
     opp_sf_record = dict(zip(sf_df["opportunity_id"], sf_df["sf_record_id"]))
@@ -1010,8 +1052,9 @@ def emit_dashboard():
 
         # If this exact (opp, concept, bucket) was resolved in a prior run,
         # the fix did not hold. Surface it explicitly.
-        prior_resolution = prior_resolutions.get(
-            (f.get("opportunity_id"), f.get("concept"), f.get("bucket"))
+        prior_resolution = _latest_prior_resolution(
+            prior_resolutions.get(_incident_key(f), []),
+            f.get("run_timestamp"),
         )
         prior_resolution_html = ""
         if prior_resolution:
@@ -1548,8 +1591,22 @@ def _post_to_slack(message):
 # -------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+    arg_parser = argparse.ArgumentParser(description="Run the reconciliation engine.")
+    arg_parser.add_argument(
+        "--now",
+        default=None,
+        help=(
+            "Override the simulated_now from contract.yaml with this ISO 8601 "
+            "timestamp (must include a timezone, e.g. 2026-10-30T13:30:00Z). "
+            "Useful for demonstrating the full detect-fix-recur loop without "
+            "editing contract.yaml between runs."
+        ),
+    )
+    cli_args = arg_parser.parse_args()
+
     data = load_data()
-    _set_run_timestamp(data["contract"])
+    _set_run_timestamp(data["contract"], override=cli_args.now)
     _set_salesforce_base_url(data["contract"])
     joined = join_records(
         data["sf_df"],

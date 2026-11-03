@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Deal Desk | Reconciliation — 2026-10-28</title>
+<title>Deal Desk | Reconciliation — 2026-10-30</title>
 <style>
   :root {
     --bg: #f6f8fb;
@@ -238,7 +238,7 @@
   </div>
 
   <h1>Reconciliation overview</h1>
-  <p class="lede">Salesforce ↔ Mission Control · 2026-10-28 · Read-only report</p>
+  <p class="lede">Salesforce ↔ Mission Control · 2026-10-30 · Read-only report</p>
 
   <div class="banner">
     <strong>Demo artifact.</strong> The engine proposes corrections based on the SOP. It does not write back to Salesforce or Mission Control in this build — a write-back module is the next engineering step. See README for the full list of known limitations.
@@ -286,7 +286,7 @@
           </div>
           <p class="card-action">Confirm the engagement is still active, then open the delivery record.</p>
           <div class="card-rootcause"><span class="pill pill-rootcause">Workflow gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Salesforce opportunity approved but Mission Control project not yet opened.</span></div>
-          <div class="prior-resolution"><strong>Prior fix did not hold.</strong> Resolved on 2026-10-27 by Deal Desk Automation.<br><span class="prior-label">Confirmed cause:</span> Handoff Flow trigger did not fire for API-driven approvals<br><span class="prior-label">Action taken:</span> <em>&ldquo;Updated Flow trigger to listen for API events in addition to UI events&rdquo;</em></div>
+          <div class="prior-resolution"><strong>Prior fix did not hold.</strong> Resolved on 2026-10-29 by Deal Desk Automation.<br><span class="prior-label">Confirmed cause:</span> Handoff Flow trigger did not fire for API-driven approvals<br><span class="prior-label">Action taken:</span> <em>&ldquo;Updated Flow trigger to listen for API events in addition to UI events&rdquo;</em></div>
         </article>
         
         <article class="card card-flag">
@@ -330,7 +330,7 @@
             </div>
           </div>
           
-          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Ownership or sync gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system differs. Salesforce is the policy owner; investigate sync or data-entry path.</span></div>
           <p class="card-meta"><em>GTM owner is set in Salesforce and governed by Sales management.</em></p>
         </article>
         
@@ -378,7 +378,7 @@
             </div>
           </div>
           
-          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Ownership or sync gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system differs. Salesforce is the policy owner; investigate sync or data-entry path.</span></div>
           <p class="card-meta"><em>Commercial record is the legal entity source.</em></p>
         </article>
         
@@ -426,7 +426,7 @@
             </div>
           </div>
           
-          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Ownership or sync gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system differs. Salesforce is the policy owner; investigate sync or data-entry path.</span></div>
           <p class="card-meta"><em>GTM owner is set in Salesforce and governed by Sales management.</em></p>
         </article>
         
@@ -482,7 +482,7 @@
   </details>
 
   <footer>
-    <strong>Prototype, not production.</strong> Run ID: <code>d60bcfdb-b31e-4e10-9093-86e71fb50274</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
+    <strong>Prototype, not production.</strong> Run ID: <code>4f91844e-1999-43de-8228-4bfaa076ce9d</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
   </footer>
 
 </main>
