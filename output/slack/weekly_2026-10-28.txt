@@ -4,13 +4,13 @@
 No prior-week data yet. The direction and prevention indicators become meaningful once the engine has run for two weeks.
 
 *New this week:*
-  • OPP-008 opportunity_owner (owned field)
-  • OPP-010 contract_value (shared field)
-  • OPP-011 customer_name (owned field)
+  • OPP-008 opportunity_owner (field_discrepancy)
+  • OPP-010 contract_value (field_discrepancy)
+  • OPP-011 customer_name (field_discrepancy)
   • OPP-012 (missing record)
   • OPP-013 handoff_flag (contract gap)
-  • OPP-014 contract_value (shared field)
-  • OPP-015 opportunity_owner (owned field)
+  • OPP-014 contract_value (field_discrepancy)
+  • OPP-015 opportunity_owner (field_discrepancy)
 
 Full log: output/reconciliation_log.json
 Runbook: runbook.md
