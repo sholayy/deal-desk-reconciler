@@ -68,7 +68,7 @@ python3 resolve.py OPP-012 \
     --team "Deal Desk Automation"
 ```
 
-If the same incident is observed after a documented resolution, the dashboard surfaces "Prior fix did not hold" and the weekly rollup labels the recurring incident as a stated fix that did not prevent recurrence. Both surfaces display the confirmed root cause the human captured alongside the corrective action.
+If the same incident is observed after a documented resolution, the dashboard surfaces "Still detected after recorded resolution" and the weekly rollup labels the recurring incident similarly. Both surfaces display the confirmed root cause and corrective action the human captured. Neither claims the fix failed; a later observation is a signal to investigate (confirm the fix was deployed, look for a new triggering event), not a proven failure.
 
 **Chronology is enforced.** The check requires valid ordering: `original observation < resolution < repeated observation`. A resolution dated before the original observation or after the current one cannot trigger a failed-fix warning. Incidents absent from a subsequent week are reported as not observed, not automatically verified as fixed.
 
@@ -89,7 +89,7 @@ python3 resolve.py OPP-012 \
 python3 reconcile.py --now "2026-10-30T13:30:00Z"
 ```
 
-Open `output/dashboard.html` and the OPP-012 card now carries the red "Prior fix did not hold" box with the resolution date, team, confirmed cause, and the corrective action that did not hold.
+Open `output/dashboard.html` and the OPP-012 card now carries the red "Still detected after recorded resolution" box with the resolution date, team, confirmed cause, corrective action, and a note that a later observation does not prove the fix failed.
 
 ## Tests
 
