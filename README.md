@@ -57,6 +57,19 @@ python3 reconcile.py
 
 The engine always writes the text files locally as the reproducible artifact. The webhook post is additive. If the post fails for any reason (bad URL, network, rate limit) the run completes anyway and prints a warning. The audit log remains the source of truth.
 
+### Capturing resolutions
+
+When a flagged incident is actually resolved, the human appends a short record to the audit log so future runs can tell whether the fix held:
+
+```bash
+python3 resolve.py OPP-012 \
+    --cause "Handoff Flow trigger did not fire for API-driven approvals" \
+    --fix "Updated Flow trigger to listen for API events in addition to UI events" \
+    --team "Deal Desk Automation"
+```
+
+If the same incident fires again on a later run, the dashboard flag card surfaces the prior resolution with "Prior fix did not hold," and the weekly rollup labels the recurring incident as a stated fix that did not prevent recurrence. Resolutions that silently work show up as closed incidents in the weekly rollup; resolutions that do not work are called out explicitly.
+
 ## Tests
 
 ```bash
@@ -70,6 +83,7 @@ Eleven unit tests cover the classifier: ownership rules in both directions, rece
 
 ```
 reconcile.py              # the engine (single file, five functions)
+resolve.py                # CLI for appending a resolution to an audit log entry
 contract.yaml             # machine-readable SOP
 contracts.md              # human-readable SOP (the policy)
 field_mapping.yaml        # Salesforce ↔ Mission Control field name translation
@@ -98,6 +112,8 @@ requirements-dev.txt      # runtime + pytest
 **The weekly rollup is organized by incident lifecycle, not observation count.** An incident is a unique `(opportunity_id, concept, bucket)` triple. One incident firing five days in a row is one incident with five observations, not five incidents. The rollup separates new, recurring (observed both weeks), and closed (last week but not this week). Direction (improving / stable / worsening) is the headline signal. This is the "verify prevention" stage of the operating model turned into a weekly text file.
 
 **Each run has a unique `run_id`.** Repeat executions on the same day don't inflate dashboard or weekly counts. Downstream views filter by the current run or by the latest run per day.
+
+**Resolutions get captured through a CLI, not a UI.** The engine's audit log records what it saw. `resolve.py` records what the human did about it: confirmed root cause, corrective action, responsible team. A CLI (rather than a web form) matches how ops engineers actually work and keeps the system scriptable. The weekly rollup and dashboard both read resolution data to answer the real question: did the fix hold? A resolution recorded but followed by recurrence is more actionable than silence, because it tells the team their stated fix was not the real fix.
 
 ## Where each surface lives in production
 
@@ -150,7 +166,6 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 - **No write-back layer.** The engine classifies and proposes corrections based on the SOP. It does not currently update Salesforce or Mission Control. Dashboard and Slack labels reflect this ("proposed" not "applied"). Next step: a write-back module with explicit `execution_status` tracking (proposed → applied → failed) and dry-run mode as the default. The audit log is the source of truth that layer would read from.
 - **Recency uses record-level timestamps.** See Process-design opportunity B. Field-level change history or an authoritative contract version source are both proper fixes. Until then, favor the ownership rule where ambiguity matters.
 - **Missing field values are skipped silently.** When either side's value is `NaN`, the comparison is bypassed. That hides real data quality problems. The right fix: track skipped comparisons as a separate category and surface them in the weekly rollup.
-- **No resolution-notes workflow.** The audit log records what the engine saw, not what the human did next. Adding a `resolution_notes` field plus a small CLI for appending them would let the weekly rollup surface recurring flags with no captured root cause (highest priority to investigate) separately from recurring flags with notes (pattern worth analyzing).
 - **Test coverage is classifier-only.** The classifier has unit tests, but `emit_outputs`, `emit_weekly_rollup`, and `emit_dashboard` don't yet. Next step: integration tests that run the engine against a fixture directory and assert on the output files.
 
 ## Guiding principle

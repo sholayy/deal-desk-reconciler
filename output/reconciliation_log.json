@@ -1,6 +1,6 @@
 [
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-008",
@@ -16,7 +16,7 @@
     "likely_source": "Non-owning system holds a different value. Salesforce is source of truth per SOP."
   },
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-010",
@@ -32,7 +32,7 @@
     "likely_source": "Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync."
   },
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-011",
@@ -48,7 +48,7 @@
     "likely_source": "Non-owning system holds a different value. Salesforce is source of truth per SOP."
   },
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-012",
@@ -61,10 +61,17 @@
     "winning_system": null,
     "reason": "Record present in salesforce only; missing from mission_control.",
     "root_cause_category": "workflow_gap",
-    "likely_source": "Salesforce opportunity approved but Mission Control project not yet opened."
+    "likely_source": "Salesforce opportunity approved but Mission Control project not yet opened.",
+    "resolution": {
+      "resolved_at": "2026-11-03T05:06:03.865465+00:00",
+      "resolved_by": "ops@example.com",
+      "root_cause": "Handoff Flow trigger did not fire for API-driven approvals",
+      "corrective_action": "Updated Flow trigger to listen for API events in addition to UI events",
+      "responsible_team": "Deal Desk Automation"
+    }
   },
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-013",
@@ -80,7 +87,7 @@
     "likely_source": "SOP does not name an owner for this field. Policy decision required."
   },
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-014",
@@ -96,7 +103,119 @@
     "likely_source": "Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync."
   },
   {
-    "run_id": "3117bdf0-283f-4cf9-94aa-15abe6a98d9f",
+    "run_id": "2a61473b-5a00-4da8-8129-0dc24e04c995",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-015",
+    "concept": "opportunity_owner",
+    "sf_value": "Priya Shah",
+    "mc_value": "Marcus Chen",
+    "bucket": "owned_field",
+    "rule_applied": "ownership",
+    "action": "auto_correct",
+    "winning_system": "salesforce",
+    "reason": "GTM owner is set in Salesforce and governed by Sales management.",
+    "root_cause_category": "upstream_validation_gap",
+    "likely_source": "Non-owning system holds a different value. Salesforce is source of truth per SOP."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-008",
+    "concept": "opportunity_owner",
+    "sf_value": "Priya Shah",
+    "mc_value": "Jordan Kim",
+    "bucket": "owned_field",
+    "rule_applied": "ownership",
+    "action": "auto_correct",
+    "winning_system": "salesforce",
+    "reason": "GTM owner is set in Salesforce and governed by Sales management.",
+    "root_cause_category": "upstream_validation_gap",
+    "likely_source": "Non-owning system holds a different value. Salesforce is source of truth per SOP."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-010",
+    "concept": "contract_value",
+    "sf_value": 480000,
+    "mc_value": 500000.0,
+    "bucket": "shared_field",
+    "rule_applied": "recency",
+    "action": "auto_correct",
+    "winning_system": "salesforce",
+    "reason": "AE may renegotiate post-approval; the more recent value is the current truth.",
+    "root_cause_category": "sync_lag_or_process_gap",
+    "likely_source": "Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-011",
+    "concept": "customer_name",
+    "sf_value": "Northwind Technologies Inc.",
+    "mc_value": "Northwind Technologies",
+    "bucket": "owned_field",
+    "rule_applied": "ownership",
+    "action": "auto_correct",
+    "winning_system": "salesforce",
+    "reason": "Commercial record is the legal entity source.",
+    "root_cause_category": "upstream_validation_gap",
+    "likely_source": "Non-owning system holds a different value. Salesforce is source of truth per SOP."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-012",
+    "concept": null,
+    "sf_value": null,
+    "mc_value": null,
+    "bucket": "missing_record",
+    "rule_applied": "none",
+    "action": "flag",
+    "winning_system": null,
+    "reason": "Record present in salesforce only; missing from mission_control.",
+    "root_cause_category": "workflow_gap",
+    "likely_source": "Salesforce opportunity approved but Mission Control project not yet opened."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-013",
+    "concept": "handoff_flag",
+    "sf_value": true,
+    "mc_value": false,
+    "bucket": "contract_gap",
+    "rule_applied": "none",
+    "action": "flag",
+    "winning_system": null,
+    "reason": "Named similarly but mean different things. Salesforce indicates the commercial side has pushed the handoff; Mission Control indicates the delivery team has acknowledged receipt. The SOP has not decided whether these should be mirrored or kept separate. Flag until resolved.\n",
+    "root_cause_category": "policy_ambiguity",
+    "likely_source": "SOP does not name an owner for this field. Policy decision required."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
+    "run_timestamp": "2026-10-28T13:30:00+00:00",
+    "run_date": "2026-10-28",
+    "opportunity_id": "OPP-014",
+    "concept": "contract_value",
+    "sf_value": 250000,
+    "mc_value": 245000.0,
+    "bucket": "shared_field",
+    "rule_applied": "recency",
+    "action": "auto_correct",
+    "winning_system": "salesforce",
+    "reason": "AE may renegotiate post-approval; the more recent value is the current truth.",
+    "root_cause_category": "sync_lag_or_process_gap",
+    "likely_source": "Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync."
+  },
+  {
+    "run_id": "4264ff68-d33c-4c59-9b42-0188f75fdbe2",
     "run_timestamp": "2026-10-28T13:30:00+00:00",
     "run_date": "2026-10-28",
     "opportunity_id": "OPP-015",
