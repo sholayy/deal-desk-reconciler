@@ -963,11 +963,9 @@ def emit_dashboard():
             else:
                 title = "Missing from Mission Control"
                 action = "Confirm the engagement is still active, then open the delivery record."
-            runbook = "Missing record"
         else:
             title = f"Policy gap: {_h(_format_concept_name(f['concept']))}"
             action = "SOP has not named an owner for this field. Decide and update contract.yaml."
-            runbook = "Contract gap"
         root_cause_html = _root_cause_line(f.get("root_cause_category"), f.get("likely_source"))
 
         # If this exact (opp, concept, bucket) was resolved in a prior run,
@@ -1000,7 +998,6 @@ def emit_dashboard():
           <p class="card-action">{action}</p>
           {root_cause_html}
           {prior_resolution_html}
-          <div class="card-meta">Runbook: {_h(runbook)}</div>
         </article>
         """
 
