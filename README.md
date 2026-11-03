@@ -68,7 +68,17 @@ python3 resolve.py OPP-012 \
     --team "Deal Desk Automation"
 ```
 
-If the same incident fires again on a later run, the dashboard flag card surfaces the prior resolution with "Prior fix did not hold," and the weekly rollup labels the recurring incident as a stated fix that did not prevent recurrence. Resolutions that silently work show up as closed incidents in the weekly rollup; resolutions that do not work are called out explicitly.
+If the engine then runs again *after* the resolution timestamp and the same incident still appears, the dashboard flag card surfaces the prior resolution with "Prior fix did not hold" (showing confirmed cause, team, and action taken) and the weekly rollup labels the recurring incident as a stated fix that did not prevent recurrence. Resolutions that silently work show up as closed incidents in the weekly rollup; resolutions that do not work are called out explicitly.
+
+**Chronology matters.** The "did not hold" check only fires when the current run's timestamp is strictly after the resolution's `resolved_at`. A resolution recorded after the current run's observation cannot have failed during that run, so the engine refuses to make that claim. If you are testing the full loop with the mock data (whose `simulated_now` is historical), pass `--resolved-at` with a date before `simulated_now`:
+
+```bash
+python3 resolve.py OPP-012 \
+    --resolved-at "2026-10-27T00:00:00Z" \
+    --cause "Handoff Flow trigger did not fire for API-driven approvals" \
+    --fix "Updated Flow trigger to listen for API events in addition to UI events" \
+    --team "Deal Desk Automation"
+```
 
 ## Tests
 
@@ -103,13 +113,13 @@ requirements-dev.txt      # runtime + pytest
 
 **The engine refuses to auto-create missing records.** Opening a Mission Control record implies committing delivery resources and a start date. That's a human decision, not a data decision. The engine flags; humans act.
 
-**Each discrepancy carries a root-cause category.** Five categories, one per bucket: `policy_ambiguity` (contract gap), `workflow_gap` (missing record), `upstream_validation_gap` (owned-field drift), `sync_lag_or_process_gap` (shared-field drift), `pending_stabilization` (held). The category points at the kind of structural fix each class of incident needs. The weekly rollup groups recurring incidents by category so a reviewer sees which category of fix would retire the most incidents at once.
+**Each discrepancy carries a suspected root-cause category.** Five categories, one per bucket: `policy_ambiguity` (contract gap), `workflow_gap` (missing record), `upstream_validation_gap` (owned-field drift), `sync_lag_or_process_gap` (shared-field drift), `pending_stabilization` (held). These are heuristics the engine applies by bucket type, not findings from investigation. The dashboard and weekly rollup carry the "Likely cause" and "suspected" framing so a reader never mistakes the engine's hypothesis for a confirmed root cause. When a human resolves an incident through `resolve.py`, the `--cause` they pass is the confirmed root cause; the dashboard's "Prior fix did not hold" box shows that confirmed cause alongside the corrective action, so the distinction between hypothesis and finding stays visible after the fact.
 
 **Per-bucket persistence thresholds, not one global number.** Field discrepancies and missing records represent different kinds of latency. A field update should propagate between systems in minutes. Opening a new Mission Control project after a Salesforce approval is a human action that can take a day. One threshold for both would create false corrections on fresh field edits or long holds on legitimately missing records. The current defaults (1h for fields, 24h for missing records) are informed guesses; in a real deployment they would be set at the 95th percentile of observed sync lag per bucket, measured empirically.
 
 **Daily Slack post + weekly rollup, no operational dashboard.** Ops teams live in Slack. A separate dashboard as a task-management tool is a new habit nobody wants. The dashboard exists only as observability — a monitoring surface for people who want to understand the system, not operate it.
 
-**The weekly rollup is organized by incident lifecycle, not observation count.** An incident is a unique `(opportunity_id, concept, bucket)` triple. One incident firing five days in a row is one incident with five observations, not five incidents. The rollup separates new, recurring (observed both weeks), and closed (last week but not this week). Direction (improving / stable / worsening) is the headline signal. This is the "verify prevention" stage of the operating model turned into a weekly text file.
+**The weekly rollup is organized by incident lifecycle, not observation count.** An incident is a unique `(opportunity_id, concept, bucket)` triple. One incident firing five days in a row is one incident with five observations, not five incidents. The rollup separates new, recurring (observed both weeks), and closed (last week but not this week). Direction (improving / stable / worsening) is the headline signal. Each recurring incident also carries a `first detected` date from the full audit log so the reader sees how long each problem has existed, and a prior-resolution annotation when applicable so a stated fix that did not hold stands apart from a problem whose root cause has never been investigated. This is the "verify prevention" stage of the operating model turned into a weekly text file.
 
 **Each run has a unique `run_id`.** Repeat executions on the same day don't inflate dashboard or weekly counts. Downstream views filter by the current run or by the latest run per day.
 

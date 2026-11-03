@@ -121,6 +121,7 @@
   .pill-rootcause { background: #f3eef9; color: #6a4a95; }
   .card-rootcause { margin: 10px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .rootcause-text { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
+  .rootcause-label { color: #6a4a95; font-weight: 600; }
   .prior-resolution {
     margin: 10px 0 0;
     padding: 10px 12px;
@@ -133,6 +134,7 @@
   }
   .prior-resolution strong { color: var(--red-text); font-weight: 650; }
   .prior-resolution em { color: #7a3a2a; font-style: italic; }
+  .prior-label { color: #7a3a2a; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 4px; }
   .values {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
@@ -283,8 +285,8 @@
             <a href="https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK12/view" class="card-btn" target="_blank" rel="noopener noreferrer">Open in Salesforce ↗</a>
           </div>
           <p class="card-action">Confirm the engagement is still active, then open the delivery record.</p>
-          <div class="card-rootcause"><span class="pill pill-rootcause">Workflow gap</span><span class="rootcause-text">Salesforce opportunity approved but Mission Control project not yet opened.</span></div>
-          <div class="prior-resolution"><strong>Prior fix did not hold.</strong> Resolved on 2026-11-03 by Deal Desk Automation: <em>&ldquo;Updated Flow trigger to listen for API events in addition to UI events&rdquo;</em></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Workflow gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Salesforce opportunity approved but Mission Control project not yet opened.</span></div>
+          <div class="prior-resolution"><strong>Prior fix did not hold.</strong> Resolved on 2026-10-27 by Deal Desk Automation.<br><span class="prior-label">Confirmed cause:</span> Handoff Flow trigger did not fire for API-driven approvals<br><span class="prior-label">Action taken:</span> <em>&ldquo;Updated Flow trigger to listen for API events in addition to UI events&rdquo;</em></div>
         </article>
         
         <article class="card card-flag">
@@ -296,7 +298,7 @@
             <a href="https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK13/view" class="card-btn" target="_blank" rel="noopener noreferrer">Open in Salesforce ↗</a>
           </div>
           <p class="card-action">SOP has not named an owner for this field. Decide and update contract.yaml.</p>
-          <div class="card-rootcause"><span class="pill pill-rootcause">Policy ambiguity</span><span class="rootcause-text">SOP does not name an owner for this field. Policy decision required.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Policy ambiguity</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> SOP does not name an owner for this field. Policy decision required.</span></div>
           
         </article>
         
@@ -328,7 +330,7 @@
             </div>
           </div>
           
-          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text">Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
           <p class="card-meta"><em>GTM owner is set in Salesforce and governed by Sales management.</em></p>
         </article>
         
@@ -352,7 +354,7 @@
             </div>
           </div>
           <p class="variance">Decrease $20,000 (-4%)</p>
-          <div class="card-rootcause"><span class="pill pill-rootcause">Sync lag or process gap</span><span class="rootcause-text">Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Sync lag or process gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync.</span></div>
           <p class="card-meta"><em>AE may renegotiate post-approval; the more recent value is the current truth.</em></p>
         </article>
         
@@ -376,7 +378,7 @@
             </div>
           </div>
           
-          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text">Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
           <p class="card-meta"><em>Commercial record is the legal entity source.</em></p>
         </article>
         
@@ -400,7 +402,7 @@
             </div>
           </div>
           <p class="variance">Increase $5,000 (+2%)</p>
-          <div class="card-rootcause"><span class="pill pill-rootcause">Sync lag or process gap</span><span class="rootcause-text">Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Sync lag or process gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync.</span></div>
           <p class="card-meta"><em>AE may renegotiate post-approval; the more recent value is the current truth.</em></p>
         </article>
         
@@ -424,7 +426,7 @@
             </div>
           </div>
           
-          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text">Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
           <p class="card-meta"><em>GTM owner is set in Salesforce and governed by Sales management.</em></p>
         </article>
         
@@ -480,7 +482,7 @@
   </details>
 
   <footer>
-    <strong>Prototype, not production.</strong> Run ID: <code>7f829145-177a-4299-8f22-93361994b300</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
+    <strong>Prototype, not production.</strong> Run ID: <code>d60bcfdb-b31e-4e10-9093-86e71fb50274</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
   </footer>
 
 </main>

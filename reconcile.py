@@ -631,16 +631,38 @@ def emit_weekly_rollup():
     # carries its root-cause category so the reader can group by the kind
     # of structural fix needed, not just by which record tripped.
     #
+    # First-detected comes from the full audit log, not just the last two
+    # weeks, so the reader sees how long each problem has existed. An
+    # incident that has been firing for six weeks reads differently from
+    # an incident that first appeared last week.
+    #
     # If a prior-week entry for the same incident has a resolution record,
     # that is a stated fix that did not hold. Call it out explicitly, because
     # a resolution that did not prevent recurrence is more actionable than
     # a resolution that worked (which would already have closed the incident).
+    # The box shows the confirmed root cause (the human's finding) alongside
+    # the corrective action, so the reader sees both what was investigated
+    # and what was done about it.
     def _latest_resolution_in(entries):
         """Return the most recent resolution object across these entries, or None."""
         resolved = [e for e in entries if e.get("resolution")]
         if not resolved:
             return None
         return max(resolved, key=lambda e: e["resolution"].get("resolved_at", ""))["resolution"]
+
+    def _first_detected_date(opp_id, concept, bucket):
+        """Return the earliest run_date in the full log that matches this incident,
+        or None if the incident has no record outside the current window."""
+        matching = [
+            e for e in log
+            if e.get("opportunity_id") == opp_id
+            and e.get("concept") == concept
+            and e.get("bucket") == bucket
+        ]
+        if not matching:
+            return None
+        earliest = min(matching, key=lambda e: e.get("run_timestamp", ""))
+        return earliest.get("run_date")
 
     if recurring_keys:
         lines.append("*Recurring incidents — root cause required:*")
@@ -658,10 +680,13 @@ def emit_weekly_rollup():
             this_count = len(this_week_incidents[key])
             prior_count = len(prior_week_incidents[key])
             category = this_week_incidents[key][0].get("root_cause_category") or "uncategorized"
+            first_detected = _first_detected_date(opp_id, concept, bucket)
+            first_detected_str = f"first detected {first_detected}" if first_detected else "first detected date unknown"
             lines.append(
                 f"  • {_incident_label(opp_id, concept, bucket)} "
-                f"[{category}]: "
-                f"{this_count} observations this week, {prior_count} last week · "
+                f"[suspected: {category}]: "
+                f"{this_count} this week, {prior_count} last week · "
+                f"{first_detected_str} · "
                 f"root cause not yet captured"
             )
 
@@ -670,12 +695,17 @@ def emit_weekly_rollup():
             this_count = len(this_week_incidents[key])
             prior_count = len(prior_week_incidents[key])
             category = this_week_incidents[key][0].get("root_cause_category") or "uncategorized"
+            first_detected = _first_detected_date(opp_id, concept, bucket)
+            first_detected_str = f"first detected {first_detected}" if first_detected else "first detected date unknown"
+            confirmed_cause = prior_resolution.get("root_cause") or "unspecified"
             lines.append(
                 f"  • {_incident_label(opp_id, concept, bucket)} "
-                f"[{category}]: "
-                f"{this_count} observations this week, {prior_count} last week · "
+                f"[suspected: {category}]: "
+                f"{this_count} this week, {prior_count} last week · "
+                f"{first_detected_str} · "
                 f"PRIOR FIX DID NOT HOLD · "
-                f"was: \"{prior_resolution.get('corrective_action')}\" "
+                f"confirmed cause: \"{confirmed_cause}\", "
+                f"action taken: \"{prior_resolution.get('corrective_action')}\" "
                 f"(by {prior_resolution.get('responsible_team', 'unknown team')})"
             )
         lines.append("")
@@ -835,9 +865,11 @@ def _root_cause_pill(category):
 
 def _root_cause_line(category, likely_source):
     """
-    Render the root-cause pill alongside a one-sentence likely source. Shown
-    on both flag and decision cards so the reader sees not just what is
-    different, but what kind of structural fix the pattern implies.
+    Render the root-cause pill alongside a one-sentence likely source. The
+    pill carries the heuristic category the engine applied; the sentence
+    describes what the engine thinks is happening. Both are hypotheses, not
+    findings. "Likely cause:" prefix makes that explicit so a reader never
+    mistakes the engine's heuristic for a confirmed investigation result.
     """
     if not category:
         return ""
@@ -845,7 +877,8 @@ def _root_cause_line(category, likely_source):
     source = escape(likely_source or "", quote=True)
     return (
         f'<div class="card-rootcause">{pill}'
-        f'<span class="rootcause-text">{source}</span></div>'
+        f'<span class="rootcause-text"><span class="rootcause-label">Likely cause:</span> {source}</span>'
+        f'</div>'
     )
 
 
@@ -898,9 +931,13 @@ def emit_dashboard():
     todays_entries = [e for e in log if e.get("run_id") == RUN_ID]
 
     # Build a map of prior resolutions, keyed by (opp_id, concept, bucket).
-    # When an incident recurs after a documented fix, the dashboard flag card
-    # surfaces the prior resolution so the viewer sees "fix did not hold"
-    # rather than treating the recurrence as a first occurrence.
+    # Chronological rule: a resolution only qualifies as "prior fix did not
+    # hold" if its resolved_at is strictly before the current run's timestamp.
+    # Otherwise the current observation pre-dates the fix and cannot be a
+    # recurrence of it. Without this check, running the engine against a
+    # historical simulated_now with a wall-clock resolution would wrongly
+    # claim the fix failed, which is logically incoherent.
+    current_run_iso = RUN_TIMESTAMP.isoformat()
     prior_resolutions = {}
     for entry in log:
         if entry.get("run_id") == RUN_ID:
@@ -908,9 +945,12 @@ def emit_dashboard():
         resolution = entry.get("resolution")
         if not resolution:
             continue
+        resolved_at = resolution.get("resolved_at", "")
+        if not resolved_at or resolved_at >= current_run_iso:
+            continue
         key = (entry.get("opportunity_id"), entry.get("concept"), entry.get("bucket"))
         existing = prior_resolutions.get(key)
-        if not existing or resolution.get("resolved_at", "") > existing.get("resolved_at", ""):
+        if not existing or resolved_at > existing.get("resolved_at", ""):
             prior_resolutions[key] = resolution
 
     opp_customer = dict(zip(sf_df["opportunity_id"], sf_df["customer_name"]))
@@ -977,12 +1017,14 @@ def emit_dashboard():
         if prior_resolution:
             resolved_date = (prior_resolution.get("resolved_at") or "")[:10]
             team = prior_resolution.get("responsible_team") or "unknown team"
+            confirmed_cause = prior_resolution.get("root_cause") or ""
             fix = prior_resolution.get("corrective_action") or ""
             prior_resolution_html = (
                 f'<div class="prior-resolution">'
                 f'<strong>Prior fix did not hold.</strong> '
-                f'Resolved on {_h(resolved_date)} by {_h(team)}: '
-                f'<em>&ldquo;{_h(fix)}&rdquo;</em>'
+                f'Resolved on {_h(resolved_date)} by {_h(team)}.<br>'
+                f'<span class="prior-label">Confirmed cause:</span> {_h(confirmed_cause)}<br>'
+                f'<span class="prior-label">Action taken:</span> <em>&ldquo;{_h(fix)}&rdquo;</em>'
                 f'</div>'
             )
 
@@ -1217,6 +1259,7 @@ def emit_dashboard():
   .pill-rootcause {{ background: #f3eef9; color: #6a4a95; }}
   .card-rootcause {{ margin: 10px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
   .rootcause-text {{ font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }}
+  .rootcause-label {{ color: #6a4a95; font-weight: 600; }}
   .prior-resolution {{
     margin: 10px 0 0;
     padding: 10px 12px;
@@ -1229,6 +1272,7 @@ def emit_dashboard():
   }}
   .prior-resolution strong {{ color: var(--red-text); font-weight: 650; }}
   .prior-resolution em {{ color: #7a3a2a; font-style: italic; }}
+  .prior-label {{ color: #7a3a2a; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; margin-right: 4px; }}
   .values {{
     display: grid;
     grid-template-columns: 1fr auto 1fr;

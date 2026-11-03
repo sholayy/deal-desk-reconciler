@@ -58,6 +58,16 @@ def main():
         help="Email of the human who resolved.",
     )
     parser.add_argument(
+        "--resolved-at",
+        default=None,
+        help=(
+            "ISO 8601 timestamp for when the resolution was applied. "
+            "Defaults to the current wall-clock time (UTC). Can be set to a "
+            "historical timestamp to backdate resolutions, which matters when "
+            "the engine runs against a simulated_now that itself is historical."
+        ),
+    )
+    parser.add_argument(
         "--log-path",
         default="output/reconciliation_log.json",
         help="Path to the audit log.",
@@ -96,7 +106,7 @@ def main():
     target_run_id = newest.get("run_id")
 
     resolution = {
-        "resolved_at": datetime.now(timezone.utc).isoformat(),
+        "resolved_at": args.resolved_at or datetime.now(timezone.utc).isoformat(),
         "resolved_by": args.resolved_by,
         "root_cause": args.cause,
         "corrective_action": args.fix,
