@@ -172,17 +172,84 @@ def join_records(sf_df, mc_df, shared_key_col):
 # engineering step (see README).
 # -------------------------------------------------------------------
 
+def _root_cause_for(d):
+    """
+    Map a classified discrepancy to a root-cause category and a human-readable
+    likely source. The category is fixed vocabulary so the weekly rollup can
+    group recurring incidents by the kind of structural fix each one needs,
+    rather than by which record happened to trip it. Five categories, mapped
+    from the five buckets the classifier produces.
+    """
+    bucket = d["bucket"]
+    if bucket == "contract_gap":
+        return (
+            "policy_ambiguity",
+            "SOP does not name an owner for this field. Policy decision required.",
+        )
+    if bucket == "missing_record":
+        reason = (d.get("reason") or "").lower()
+        if "missing from salesforce" in reason:
+            return (
+                "workflow_gap",
+                "Delivery engagement underway but Salesforce opportunity record not opened.",
+            )
+        return (
+            "workflow_gap",
+            "Salesforce opportunity approved but Mission Control project not yet opened.",
+        )
+    if bucket == "owned_field":
+        system = (d.get("winning_system") or "owning system").replace("_", " ").title()
+        return (
+            "upstream_validation_gap",
+            f"Non-owning system holds a different value. {system} is source of truth per SOP.",
+        )
+    if bucket == "shared_field":
+        return (
+            "sync_lag_or_process_gap",
+            "Both systems updated independently. Recency rule applied. "
+            "Repeated occurrence suggests manual drift or a missed sync.",
+        )
+    if bucket == "below_threshold":
+        return (
+            "pending_stabilization",
+            "Change still within persistence window. Awaiting re-evaluation on next run.",
+        )
+    return None, None
+
+
 def classify_discrepancies(joined, contract, mapping):
     """
     For each joined row, inspects every mapped concept field and returns
     a list of classified discrepancies.
 
     Each discrepancy carries bucket, rule_applied, action, winning_system,
-    and the SOP's reason. 'action' is a DECISION, not an executed write.
+    the SOP's reason, and a root-cause category plus a human-readable
+    likely source. 'action' is a DECISION, not an executed write. The
+    category and source are what the weekly rollup groups by when it
+    identifies which recurring problems need structural fixes.
     """
 
     discrepancies = []
-    threshold_hours = contract["persistence_threshold_hours"]
+
+    # Thresholds come in two forms:
+    #   (a) legacy single number: persistence_threshold_hours: 4
+    #   (b) per-bucket dict: persistence_threshold_hours:
+    #           field_discrepancy: 1
+    #           missing_record: 24
+    #           default: 4
+    # Different buckets have different natural latencies. A field value
+    # should propagate between systems in minutes; a brand-new Mission Control
+    # project after a Salesforce approval is a human action that can take
+    # a day. One threshold for both is too coarse. The dict form lets each
+    # bucket carry its own window.
+    threshold_config = contract["persistence_threshold_hours"]
+    if isinstance(threshold_config, (int, float)):
+        field_threshold = threshold_config
+        missing_record_threshold = threshold_config
+    else:
+        default = threshold_config.get("default", 4)
+        field_threshold = threshold_config.get("field_discrepancy", default)
+        missing_record_threshold = threshold_config.get("missing_record", default)
 
     for _, row in joined.iterrows():
         opp_id = row["opportunity_id"]
@@ -209,7 +276,7 @@ def classify_discrepancies(joined, contract, mapping):
             if pd.notna(existing_ts_raw):
                 existing_ts = date_parser.parse(str(existing_ts_raw))
                 age_hours = (RUN_TIMESTAMP - existing_ts).total_seconds() / 3600
-                if age_hours < threshold_hours:
+                if age_hours < missing_record_threshold:
                     discrepancies.append({
                         "opportunity_id": opp_id,
                         "sf_record_id": row.get("sf_record_id"),
@@ -222,7 +289,7 @@ def classify_discrepancies(joined, contract, mapping):
                         "winning_system": None,
                         "reason": (
                             f"Record present in {present_in} only "
-                            f"({age_hours:.1f}h old); below {threshold_hours}h "
+                            f"({age_hours:.1f}h old); below {missing_record_threshold}h "
                             f"persistence threshold. Counterpart in {missing_from} "
                             f"may not have been opened yet."
                         ),
@@ -263,7 +330,7 @@ def classify_discrepancies(joined, contract, mapping):
             most_recent = max(sf_ts, mc_ts)
             age_hours = (RUN_TIMESTAMP - most_recent).total_seconds() / 3600
 
-            if age_hours < threshold_hours:
+            if age_hours < field_threshold:
                 discrepancies.append({
                     "opportunity_id": opp_id,
                     "sf_record_id": row.get("sf_record_id"),
@@ -274,7 +341,7 @@ def classify_discrepancies(joined, contract, mapping):
                     "rule_applied": "none",
                     "action": "hold",
                     "winning_system": None,
-                    "reason": f"Most recent change {age_hours:.1f}h ago; below {threshold_hours}h persistence threshold.",
+                    "reason": f"Most recent change {age_hours:.1f}h ago; below {field_threshold}h persistence threshold.",
                 })
                 continue
 
@@ -329,6 +396,12 @@ def classify_discrepancies(joined, contract, mapping):
                     "reason": gap_fields["reason"],
                 })
 
+    # Tag every discrepancy with a root-cause category and likely source.
+    # Done at the end rather than inline at each append so there is a single
+    # place to update the vocabulary and the mappings over time.
+    for d in discrepancies:
+        d["root_cause_category"], d["likely_source"] = _root_cause_for(d)
+
     return discrepancies
 
 
@@ -353,6 +426,8 @@ def emit_outputs(discrepancies):
             "action": d["action"],
             "winning_system": d["winning_system"],
             "reason": d["reason"],
+            "root_cause_category": d.get("root_cause_category"),
+            "likely_source": d.get("likely_source"),
         })
 
     existing_log = []
@@ -426,9 +501,35 @@ def emit_outputs(discrepancies):
 
 
 # -------------------------------------------------------------------
-# Weekly rollup — dedupes to one run per day so repeated executions
-# don't inflate counts.
+# Weekly rollup — organizes by incident lifecycle: new, recurring, closed.
+#
+# An "incident" is a unique (opportunity_id, concept, bucket) triple. One
+# incident can produce many audit log entries if it fires on multiple days
+# of the week. Counting observations instead of incidents inflates the
+# number and hides the fact that most of the noise is the same unresolved
+# issue firing repeatedly, which is a design problem rather than a monitoring
+# problem.
+#
+# The rollup compares this week to the prior week along two dimensions:
+# which incidents are new, which are chronic (recurring in both weeks),
+# and which closed between weeks. Direction (improving / stable / worsening)
+# is the headline signal.
 # -------------------------------------------------------------------
+
+def _incident_label(opp_id, concept, bucket):
+    """Human-readable label for an incident triple. Used in the rollup."""
+    bucket_names = {
+        "missing_record": "missing record",
+        "owned_field": "owned field",
+        "shared_field": "shared field",
+        "below_threshold": "held below threshold",
+        "contract_gap": "contract gap",
+    }
+    bucket_label = bucket_names.get(bucket, bucket)
+    if concept:
+        return f"{opp_id} {concept} ({bucket_label})"
+    return f"{opp_id} ({bucket_label})"
+
 
 def emit_weekly_rollup():
     if not AUDIT_LOG.exists():
@@ -437,68 +538,148 @@ def emit_weekly_rollup():
         log = json.load(f)
 
     from datetime import timedelta
-    cutoff = RUN_TIMESTAMP - timedelta(days=7)
-    all_recent = [
-        e for e in log
-        if date_parser.parse(e["run_timestamp"]) >= cutoff
-    ]
-    if not all_recent:
-        return None
-
     from collections import defaultdict
-    days = defaultdict(list)
-    for e in all_recent:
-        days[e["run_date"]].append(e)
-    latest_run_per_day = {}
-    for date, entries in days.items():
-        latest = max(entries, key=lambda e: e["run_timestamp"])
-        latest_run_per_day[date] = latest.get("run_id")
-    recent = [
-        e for e in all_recent
-        if e.get("run_id") == latest_run_per_day.get(e["run_date"])
+
+    # Two windows: last 7 days (this week) and the 7 days before that (prior week).
+    this_week_start = RUN_TIMESTAMP - timedelta(days=7)
+    prior_week_start = RUN_TIMESTAMP - timedelta(days=14)
+    this_week_end = RUN_TIMESTAMP + timedelta(days=1)
+
+    this_week_raw = [
+        e for e in log
+        if this_week_start <= date_parser.parse(e["run_timestamp"]) < this_week_end
     ]
-    if not recent:
+    prior_week_raw = [
+        e for e in log
+        if prior_week_start <= date_parser.parse(e["run_timestamp"]) < this_week_start
+    ]
+
+    if not this_week_raw:
         return None
 
-    from collections import Counter
-    bucket_counts = Counter(e["bucket"] for e in recent)
-    recency_fields = Counter(
-        e["concept"] for e in recent if e["rule_applied"] == "recency"
-    )
-    gaps_this_week = set(
-        e["concept"] for e in recent if e["bucket"] == "contract_gap"
-    )
+    def _dedupe_to_latest_run_per_day(entries):
+        """Within a window, keep only entries from the latest run of each day."""
+        by_day = defaultdict(list)
+        for e in entries:
+            by_day[e["run_date"]].append(e)
+        latest_run_per_day = {}
+        for day, day_entries in by_day.items():
+            latest = max(day_entries, key=lambda x: x["run_timestamp"])
+            latest_run_per_day[day] = latest.get("run_id")
+        return [
+            e for e in entries
+            if e.get("run_id") == latest_run_per_day.get(e["run_date"])
+        ]
+
+    this_week = _dedupe_to_latest_run_per_day(this_week_raw)
+    prior_week = _dedupe_to_latest_run_per_day(prior_week_raw)
+
+    def _unique_incidents(entries):
+        """Group entries by (opportunity_id, concept, bucket). Each key is one
+        incident; its value is the list of audit log entries that observed it."""
+        incidents = defaultdict(list)
+        for e in entries:
+            key = (e["opportunity_id"], e.get("concept"), e["bucket"])
+            incidents[key].append(e)
+        return incidents
+
+    this_week_incidents = _unique_incidents(this_week)
+    prior_week_incidents = _unique_incidents(prior_week)
+
+    this_keys = set(this_week_incidents.keys())
+    prior_keys = set(prior_week_incidents.keys())
+    recurring_keys = this_keys & prior_keys
+    new_keys = this_keys - prior_keys
+    closed_keys = prior_keys - this_keys
 
     week_header = RUN_TIMESTAMP.strftime("Week ending %A %b %-d")
     lines = [f"*Deal Desk reconciliation — weekly rollup: {week_header}*", ""]
 
-    total = len(recent)
-    corrections = bucket_counts.get("owned_field", 0) + bucket_counts.get("shared_field", 0)
-    flags = bucket_counts.get("missing_record", 0) + bucket_counts.get("contract_gap", 0)
+    this_unique = len(this_keys)
+    this_observations = len(this_week)
+    prior_unique = len(prior_keys)
+    prior_observations = len(prior_week)
+
     lines.append(
-        f"{total} discrepancies this week. "
-        f"{corrections} corrections proposed by rule, {flags} flagged for review, "
-        f"{bucket_counts.get('below_threshold', 0)} held below threshold."
+        f"{this_unique} unique incidents this week ({this_observations} observations)."
     )
+    if prior_week:
+        if this_unique < prior_unique:
+            direction = "improving"
+        elif this_unique > prior_unique:
+            direction = "worsening"
+        else:
+            direction = "stable"
+        lines.append(
+            f"Changes since last week: {len(closed_keys)} closed, "
+            f"{len(recurring_keys)} recurring, {len(new_keys)} new. "
+            f"Direction: {direction}."
+        )
+        lines.append(
+            "_Prevention check: closed means the specific incident did not recur. "
+            "Recurring means it did. The ratio is the health signal._"
+        )
+    else:
+        lines.append(
+            "No prior-week data yet. The direction and prevention indicators become "
+            "meaningful once the engine has run for two weeks."
+        )
     lines.append("")
 
-    if recency_fields:
-        lines.append("*Fields drifting most (recency decisions):*")
-        for field, count in recency_fields.most_common(3):
-            lines.append(f"  • {field}: {count} {'correction' if count == 1 else 'corrections'}")
-        lines.append("")
-        top_field, top_count = recency_fields.most_common(1)[0]
-        if top_count >= 2:
+    # Recurring: appeared in both weeks. These are the design problems the
+    # system is telling you about. Not whack-a-mole, root cause. Each one
+    # carries its root-cause category so the reader can group by the kind
+    # of structural fix needed, not just by which record tripped.
+    if recurring_keys:
+        lines.append("*Recurring incidents — root cause required:*")
+        for key in sorted(recurring_keys):
+            opp_id, concept, bucket = key
+            this_count = len(this_week_incidents[key])
+            prior_count = len(prior_week_incidents[key])
+            category = this_week_incidents[key][0].get("root_cause_category") or "uncategorized"
             lines.append(
-                f"_Pattern worth watching: {top_field} drifted {top_count} times this week. "
-                f"Likely an upstream process gap — raise in next ops sync._"
+                f"  • {_incident_label(opp_id, concept, bucket)} "
+                f"[{category}]: "
+                f"{this_count} observations this week, {prior_count} last week"
             )
+        lines.append("")
+
+        # Group recurring incidents by category so a reviewer sees which
+        # category of fix would retire the most incidents at once.
+        from collections import Counter
+        category_counts = Counter(
+            (this_week_incidents[k][0].get("root_cause_category") or "uncategorized")
+            for k in recurring_keys
+        )
+        if len(category_counts) >= 1:
+            lines.append("_Recurring by root-cause category:_")
+            for category, count in category_counts.most_common():
+                lines.append(
+                    f"  • {category}: {count} recurring {'incident' if count == 1 else 'incidents'}"
+                )
             lines.append("")
 
-    if gaps_this_week:
-        lines.append("*Contract gaps surfaced this week (SOP needs decisions):*")
-        for gap in gaps_this_week:
-            lines.append(f"  • {gap}")
+    # New this week: present now, absent last week.
+    if new_keys:
+        lines.append("*New this week:*")
+        for key in sorted(new_keys):
+            opp_id, concept, bucket = key
+            count = len(this_week_incidents[key])
+            label = _incident_label(opp_id, concept, bucket)
+            if count > 1:
+                lines.append(f"  • {label}: {count} observations")
+            else:
+                lines.append(f"  • {label}")
+        lines.append("")
+
+    # Closed this week: present last week, absent now. These are wins. Named
+    # explicitly because the system telling you what stopped happening is as
+    # useful as it telling you what is still happening.
+    if closed_keys:
+        lines.append("*Closed this week:*")
+        for key in sorted(closed_keys):
+            opp_id, concept, bucket = key
+            lines.append(f"  • {_incident_label(opp_id, concept, bucket)}")
         lines.append("")
 
     lines.append("Full log: output/reconciliation_log.json")
@@ -514,9 +695,12 @@ def emit_weekly_rollup():
     return {
         "weekly_message_path": str(weekly_path),
         "slack_posted": slack_posted,
-        "entries_covered": len(recent),
-        "fields_drifting": dict(recency_fields),
-        "gaps_open": list(gaps_this_week),
+        "unique_incidents_this_week": this_unique,
+        "observations_this_week": this_observations,
+        "unique_incidents_prior_week": prior_unique,
+        "recurring_count": len(recurring_keys),
+        "new_count": len(new_keys),
+        "closed_count": len(closed_keys),
     }
 
 
@@ -589,6 +773,38 @@ def _variance_line(concept, current, proposed):
     return f'<p class="variance">{direction} {abs_delta}{percent}</p>'
 
 
+def _root_cause_pill(category):
+    """Small pill rendered on dashboard cards showing the root-cause category.
+    Returns empty markup for None (so held items with no category stay clean)."""
+    if not category:
+        return ""
+    labels = {
+        "policy_ambiguity": "Policy ambiguity",
+        "workflow_gap": "Workflow gap",
+        "upstream_validation_gap": "Upstream validation gap",
+        "sync_lag_or_process_gap": "Sync lag or process gap",
+        "pending_stabilization": "Pending stabilization",
+    }
+    label = labels.get(category, category.replace("_", " ").title())
+    return f'<span class="pill pill-rootcause">{escape(label, quote=True)}</span>'
+
+
+def _root_cause_line(category, likely_source):
+    """
+    Render the root-cause pill alongside a one-sentence likely source. Shown
+    on both flag and decision cards so the reader sees not just what is
+    different, but what kind of structural fix the pattern implies.
+    """
+    if not category:
+        return ""
+    pill = _root_cause_pill(category)
+    source = escape(likely_source or "", quote=True)
+    return (
+        f'<div class="card-rootcause">{pill}'
+        f'<span class="rootcause-text">{source}</span></div>'
+    )
+
+
 def _held_eligibility_line(reason, run_timestamp, threshold_hours=4):
     """
     Reads 'Most recent change X.Yh ago; below ...' and returns a human-readable
@@ -652,11 +868,24 @@ def emit_dashboard():
 
     unique_flagged_opps = len({e["opportunity_id"] for e in flags})
 
-    # Read the stabilization window from the SOP so a change in contract.yaml
-    # flows through to every surface — dashboard header, policy sidebar,
-    # held-item caption, eligibility countdown — without touching the engine.
+    # Read the stabilization windows from the SOP so a change in contract.yaml
+    # flows through to every surface (dashboard header, policy sidebar,
+    # held-item caption, eligibility countdown) without touching the engine.
+    # The threshold can be a single int (legacy) or a per-bucket dict.
     with open(CONTRACT_YAML, "r") as f:
-        threshold = yaml.safe_load(f)["persistence_threshold_hours"]
+        threshold_config = yaml.safe_load(f)["persistence_threshold_hours"]
+    if isinstance(threshold_config, (int, float)):
+        field_threshold_hrs = threshold_config
+        record_threshold_hrs = threshold_config
+        threshold_summary = f"{threshold_config} hours"
+    else:
+        default = threshold_config.get("default", 4)
+        field_threshold_hrs = threshold_config.get("field_discrepancy", default)
+        record_threshold_hrs = threshold_config.get("missing_record", default)
+        if field_threshold_hrs == record_threshold_hrs:
+            threshold_summary = f"{field_threshold_hrs} hours"
+        else:
+            threshold_summary = f"{field_threshold_hrs}h fields / {record_threshold_hrs}h records"
 
     # ---------- Flag cards ----------
     def _render_flag_card(f):
@@ -679,6 +908,7 @@ def emit_dashboard():
             title = f"Policy gap: {_h(_format_concept_name(f['concept']))}"
             action = "SOP has not named an owner for this field. Decide and update contract.yaml."
             runbook = "Contract gap"
+        root_cause_html = _root_cause_line(f.get("root_cause_category"), f.get("likely_source"))
         return f"""
         <article class="card card-flag">
           <div class="card-top">
@@ -689,6 +919,7 @@ def emit_dashboard():
             {link_html}
           </div>
           <p class="card-action">{action}</p>
+          {root_cause_html}
           <div class="card-meta">Runbook: {_h(runbook)}</div>
         </article>
         """
@@ -708,6 +939,7 @@ def emit_dashboard():
         was_display = _format_value_for_display(d["concept"], was_value)
         now_display = _format_value_for_display(d["concept"], now_value)
         variance_html = _variance_line(d["concept"], was_value, now_value)
+        root_cause_html = _root_cause_line(d.get("root_cause_category"), d.get("likely_source"))
         return f"""
         <article class="card card-decision">
           <div class="card-top">
@@ -729,6 +961,7 @@ def emit_dashboard():
             </div>
           </div>
           {variance_html}
+          {root_cause_html}
           <p class="card-meta"><em>{_h(d['reason'])}</em></p>
         </article>
         """
@@ -738,7 +971,15 @@ def emit_dashboard():
     # ---------- Held cards (small) ----------
     def _render_held_card(h):
         customer = opp_customer.get(h["opportunity_id"], "")
-        eligibility = _held_eligibility_line(h["reason"], RUN_TIMESTAMP, threshold_hours=threshold)
+        # Held items can come from either a field discrepancy or a missing-record
+        # under its own threshold. Pick the one that matches so the eligibility
+        # countdown is correct for both.
+        reason = (h.get("reason") or "").lower()
+        if "record present in" in reason:
+            held_threshold = record_threshold_hrs
+        else:
+            held_threshold = field_threshold_hrs
+        eligibility = _held_eligibility_line(h["reason"], RUN_TIMESTAMP, threshold_hours=held_threshold)
         return f"""
         <div class="card card-held">
           <div class="card-top">
@@ -896,6 +1137,9 @@ def emit_dashboard():
   }}
   .pill-decision {{ background: var(--blue-bg); color: var(--blue-text); }}
   .pill-held {{ background: var(--amber-bg); color: var(--amber-text); }}
+  .pill-rootcause {{ background: #f3eef9; color: #6a4a95; }}
+  .card-rootcause {{ margin: 10px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+  .rootcause-text {{ font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }}
   .values {{
     display: grid;
     grid-template-columns: 1fr auto 1fr;
@@ -1024,7 +1268,7 @@ def emit_dashboard():
     <div class="stat">
       <div class="label">Held</div>
       <div class="num">{len(held)}</div>
-      <small>{threshold}-hour stabilization window</small>
+      <small>Stabilization: {threshold_summary}</small>
     </div>
   </section>
 
@@ -1050,7 +1294,7 @@ def emit_dashboard():
       <section class="panel">
         <div class="section-head">
           <h2>Held while they stabilize</h2>
-          <div class="caption">Changes less than the {threshold}-hour threshold. Re-evaluated next run.</div>
+          <div class="caption">Changes still inside their stabilization window ({threshold_summary}). Re-evaluated next run.</div>
         </div>
         {held_cards_html}
       </section>
@@ -1065,7 +1309,7 @@ def emit_dashboard():
         <div class="policy-row"><span>Field ownership</span><strong>Owner wins</strong></div>
         <div class="policy-row"><span>Shared fields</span><strong>Newest record*</strong></div>
         <div class="policy-row"><span>Unresolved SOP gaps</span><strong>Human review</strong></div>
-        <div class="policy-row"><span>Stabilization</span><strong>{threshold} hours</strong></div>
+        <div class="policy-row"><span>Stabilization</span><strong>{threshold_summary}</strong></div>
         <p class="policy-note">*Current recency logic uses record-level timestamps, not field-level change history. See README.</p>
       </section>
 

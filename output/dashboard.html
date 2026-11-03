@@ -118,6 +118,9 @@
   }
   .pill-decision { background: var(--blue-bg); color: var(--blue-text); }
   .pill-held { background: var(--amber-bg); color: var(--amber-text); }
+  .pill-rootcause { background: #f3eef9; color: #6a4a95; }
+  .card-rootcause { margin: 10px 0 2px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .rootcause-text { font-size: 12px; color: var(--muted); flex: 1; min-width: 0; }
   .values {
     display: grid;
     grid-template-columns: 1fr auto 1fr;
@@ -240,13 +243,13 @@
     </div>
     <div class="stat decision">
       <div class="label">Corrections proposed</div>
-      <div class="num">3</div>
+      <div class="num">5</div>
       <small>By ownership or recency rule</small>
     </div>
     <div class="stat">
       <div class="label">Held</div>
-      <div class="num">2</div>
-      <small>4-hour stabilization window</small>
+      <div class="num">0</div>
+      <small>Stabilization: 1h fields / 24h records</small>
     </div>
   </section>
 
@@ -268,6 +271,7 @@
             <a href="https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK12/view" class="card-btn" target="_blank" rel="noopener noreferrer">Open in Salesforce ↗</a>
           </div>
           <p class="card-action">Confirm the engagement is still active, then open the delivery record.</p>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Workflow gap</span><span class="rootcause-text">Salesforce opportunity approved but Mission Control project not yet opened.</span></div>
           <div class="card-meta">Runbook: Missing record</div>
         </article>
         
@@ -280,6 +284,7 @@
             <a href="https://cohere-demo.lightning.force.com/lightning/r/Opportunity/0066g00000MOCK13/view" class="card-btn" target="_blank" rel="noopener noreferrer">Open in Salesforce ↗</a>
           </div>
           <p class="card-action">SOP has not named an owner for this field. Decide and update contract.yaml.</p>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Policy ambiguity</span><span class="rootcause-text">SOP does not name an owner for this field. Policy decision required.</span></div>
           <div class="card-meta">Runbook: Contract gap</div>
         </article>
         
@@ -311,6 +316,7 @@
             </div>
           </div>
           
+          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text">Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
           <p class="card-meta"><em>GTM owner is set in Salesforce and governed by Sales management.</em></p>
         </article>
         
@@ -334,6 +340,7 @@
             </div>
           </div>
           <p class="variance">Decrease $20,000 (-4%)</p>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Sync lag or process gap</span><span class="rootcause-text">Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync.</span></div>
           <p class="card-meta"><em>AE may renegotiate post-approval; the more recent value is the current truth.</em></p>
         </article>
         
@@ -357,7 +364,56 @@
             </div>
           </div>
           
+          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text">Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
           <p class="card-meta"><em>Commercial record is the legal entity source.</em></p>
+        </article>
+        
+        <article class="card card-decision">
+          <div class="card-top">
+            <div>
+              <div class="card-eyebrow">OPP-014 · Juniper Software</div>
+              <h3 class="card-title">Contract Value</h3>
+            </div>
+            <span class="pill pill-decision">Recency rule</span>
+          </div>
+          <div class="values">
+            <div class="values-col values-was">
+              <small>Current · Mission Control</small>
+              <div class="values-text">$245,000</div>
+            </div>
+            <span class="values-arrow">→</span>
+            <div class="values-col values-now">
+              <small>Proposed · Salesforce</small>
+              <div class="values-text">$250,000</div>
+            </div>
+          </div>
+          <p class="variance">Increase $5,000 (+2%)</p>
+          <div class="card-rootcause"><span class="pill pill-rootcause">Sync lag or process gap</span><span class="rootcause-text">Both systems updated independently. Recency rule applied. Repeated occurrence suggests manual drift or a missed sync.</span></div>
+          <p class="card-meta"><em>AE may renegotiate post-approval; the more recent value is the current truth.</em></p>
+        </article>
+        
+        <article class="card card-decision">
+          <div class="card-top">
+            <div>
+              <div class="card-eyebrow">OPP-015 · Pacific Dental Group</div>
+              <h3 class="card-title">Opportunity Owner</h3>
+            </div>
+            <span class="pill pill-decision">Ownership rule</span>
+          </div>
+          <div class="values">
+            <div class="values-col values-was">
+              <small>Current · Mission Control</small>
+              <div class="values-text">Marcus Chen</div>
+            </div>
+            <span class="values-arrow">→</span>
+            <div class="values-col values-now">
+              <small>Proposed · Salesforce</small>
+              <div class="values-text">Priya Shah</div>
+            </div>
+          </div>
+          
+          <div class="card-rootcause"><span class="pill pill-rootcause">Upstream validation gap</span><span class="rootcause-text">Non-owning system holds a different value. Salesforce is source of truth per SOP.</span></div>
+          <p class="card-meta"><em>GTM owner is set in Salesforce and governed by Sales management.</em></p>
         </article>
         
       </section>
@@ -365,31 +421,9 @@
       <section class="panel">
         <div class="section-head">
           <h2>Held while they stabilize</h2>
-          <div class="caption">Changes less than the 4-hour threshold. Re-evaluated next run.</div>
+          <div class="caption">Changes still inside their stabilization window (1h fields / 24h records). Re-evaluated next run.</div>
         </div>
-        
-        <div class="card card-held">
-          <div class="card-top">
-            <div>
-              <div class="card-eyebrow">OPP-014 · Juniper Software</div>
-              <h3 class="card-title">Contract Value</h3>
-            </div>
-            <span class="pill pill-held">Held</span>
-          </div>
-          <p class="card-meta">Eligible for action at 14:42 UTC (in 1h 12m).</p>
-        </div>
-        
-        <div class="card card-held">
-          <div class="card-top">
-            <div>
-              <div class="card-eyebrow">OPP-015 · Pacific Dental Group</div>
-              <h3 class="card-title">Opportunity Owner</h3>
-            </div>
-            <span class="pill pill-held">Held</span>
-          </div>
-          <p class="card-meta">Eligible for action at 14:42 UTC (in 1h 12m).</p>
-        </div>
-        
+        <div class="empty">Nothing on hold this run.</div>
       </section>
     </div>
 
@@ -402,7 +436,7 @@
         <div class="policy-row"><span>Field ownership</span><strong>Owner wins</strong></div>
         <div class="policy-row"><span>Shared fields</span><strong>Newest record*</strong></div>
         <div class="policy-row"><span>Unresolved SOP gaps</span><strong>Human review</strong></div>
-        <div class="policy-row"><span>Stabilization</span><strong>4 hours</strong></div>
+        <div class="policy-row"><span>Stabilization</span><strong>1h fields / 24h records</strong></div>
         <p class="policy-note">*Current recency logic uses record-level timestamps, not field-level change history. See README.</p>
       </section>
 
@@ -424,17 +458,17 @@
     <div class="raw-tables">
       <div>
         <div class="raw-table-title">Salesforce export</div>
-        <div class="raw-table-wrap"><table class='data-table'><thead><tr><th>opportunity_id</th><th>customer_name</th><th>contract_value_usd</th><th>commercial_approval_status</th><th>opportunity_owner</th><th>stage</th><th>last_modified_ts</th><th>handoff_submitted</th><th>sf_record_id</th></tr></thead><tbody><tr><td>OPP-001</td><td>Northwind Technologies Inc.</td><td>250000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-20T14:30:00Z</td><td>True</td><td>0066g00000MOCK01</td></tr><tr><td>OPP-002</td><td>Riverside Health</td><td>420000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-18T09:15:00Z</td><td>True</td><td>0066g00000MOCK02</td></tr><tr><td>OPP-003</td><td>Beacon Analytics</td><td>180000</td><td>Approved</td><td>Marcus Chen</td><td>Handoff</td><td>2026-10-21T11:00:00Z</td><td>True</td><td>0066g00000MOCK03</td></tr><tr><td>OPP-004</td><td>Vista Logistics</td><td>615000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-15T16:45:00Z</td><td>True</td><td>0066g00000MOCK04</td></tr><tr><td>OPP-005</td><td>Harbor Financial Group</td><td>890000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-19T10:20:00Z</td><td>True</td><td>0066g00000MOCK05</td></tr><tr><td>OPP-006</td><td>Cedar Mountain Co-op</td><td>145000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-22T08:30:00Z</td><td>True</td><td>0066g00000MOCK06</td></tr><tr><td>OPP-007</td><td>Lakeside Media</td><td>320000</td><td>Approved</td><td>Marcus Chen</td><td>Handoff</td><td>2026-10-17T13:00:00Z</td><td>True</td><td>0066g00000MOCK07</td></tr><tr class="row-decision"><td>OPP-008</td><td>Summit Robotics</td><td>275000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-20T15:00:00Z</td><td>True</td><td>0066g00000MOCK08</td></tr><tr class="row-decision"><td>OPP-010</td><td>Delta Research Labs</td><td>480000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-26T10:00:00Z</td><td>True</td><td>0066g00000MOCK10</td></tr><tr class="row-decision"><td>OPP-011</td><td>Northwind Technologies Inc.</td><td>340000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-27T09:00:00Z</td><td>True</td><td>0066g00000MOCK11</td></tr><tr class="row-flag"><td>OPP-012</td><td>Atlas Freight Services</td><td>560000</td><td>Approved</td><td>Marcus Chen</td><td>Approved</td><td>2026-10-23T14:00:00Z</td><td>True</td><td>0066g00000MOCK12</td></tr><tr class="row-flag"><td>OPP-013</td><td>Meridian Energy</td><td>720000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-21T11:30:00Z</td><td>True</td><td>0066g00000MOCK13</td></tr><tr class="row-held"><td>OPP-014</td><td>Juniper Software</td><td>250000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-28T10:40:00Z</td><td>True</td><td>0066g00000MOCK14</td></tr><tr class="row-held"><td>OPP-015</td><td>Pacific Dental Group</td><td>195000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-28T10:45:00Z</td><td>True</td><td>0066g00000MOCK15</td></tr></tbody></table></div>
+        <div class="raw-table-wrap"><table class='data-table'><thead><tr><th>opportunity_id</th><th>customer_name</th><th>contract_value_usd</th><th>commercial_approval_status</th><th>opportunity_owner</th><th>stage</th><th>last_modified_ts</th><th>handoff_submitted</th><th>sf_record_id</th></tr></thead><tbody><tr><td>OPP-001</td><td>Northwind Technologies Inc.</td><td>250000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-20T14:30:00Z</td><td>True</td><td>0066g00000MOCK01</td></tr><tr><td>OPP-002</td><td>Riverside Health</td><td>420000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-18T09:15:00Z</td><td>True</td><td>0066g00000MOCK02</td></tr><tr><td>OPP-003</td><td>Beacon Analytics</td><td>180000</td><td>Approved</td><td>Marcus Chen</td><td>Handoff</td><td>2026-10-21T11:00:00Z</td><td>True</td><td>0066g00000MOCK03</td></tr><tr><td>OPP-004</td><td>Vista Logistics</td><td>615000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-15T16:45:00Z</td><td>True</td><td>0066g00000MOCK04</td></tr><tr><td>OPP-005</td><td>Harbor Financial Group</td><td>890000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-19T10:20:00Z</td><td>True</td><td>0066g00000MOCK05</td></tr><tr><td>OPP-006</td><td>Cedar Mountain Co-op</td><td>145000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-22T08:30:00Z</td><td>True</td><td>0066g00000MOCK06</td></tr><tr><td>OPP-007</td><td>Lakeside Media</td><td>320000</td><td>Approved</td><td>Marcus Chen</td><td>Handoff</td><td>2026-10-17T13:00:00Z</td><td>True</td><td>0066g00000MOCK07</td></tr><tr class="row-decision"><td>OPP-008</td><td>Summit Robotics</td><td>275000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-20T15:00:00Z</td><td>True</td><td>0066g00000MOCK08</td></tr><tr class="row-decision"><td>OPP-010</td><td>Delta Research Labs</td><td>480000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-26T10:00:00Z</td><td>True</td><td>0066g00000MOCK10</td></tr><tr class="row-decision"><td>OPP-011</td><td>Northwind Technologies Inc.</td><td>340000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-27T09:00:00Z</td><td>True</td><td>0066g00000MOCK11</td></tr><tr class="row-flag"><td>OPP-012</td><td>Atlas Freight Services</td><td>560000</td><td>Approved</td><td>Marcus Chen</td><td>Approved</td><td>2026-10-23T14:00:00Z</td><td>True</td><td>0066g00000MOCK12</td></tr><tr class="row-flag"><td>OPP-013</td><td>Meridian Energy</td><td>720000</td><td>Approved</td><td>Elena Rodriguez</td><td>Handoff</td><td>2026-10-21T11:30:00Z</td><td>True</td><td>0066g00000MOCK13</td></tr><tr class="row-decision"><td>OPP-014</td><td>Juniper Software</td><td>250000</td><td>Approved</td><td>Jordan Kim</td><td>Handoff</td><td>2026-10-28T10:40:00Z</td><td>True</td><td>0066g00000MOCK14</td></tr><tr class="row-decision"><td>OPP-015</td><td>Pacific Dental Group</td><td>195000</td><td>Approved</td><td>Priya Shah</td><td>Handoff</td><td>2026-10-28T10:45:00Z</td><td>True</td><td>0066g00000MOCK15</td></tr></tbody></table></div>
       </div>
       <div>
         <div class="raw-table-title">Mission Control export</div>
-        <div class="raw-table-wrap"><table class='data-table'><thead><tr><th>mc_project_id</th><th>account</th><th>engagement_value</th><th>commercial_contact</th><th>delivery_squad</th><th>kickoff_date</th><th>project_status</th><th>program_lead</th><th>updated_at</th><th>handoff_received</th></tr></thead><tbody><tr><td>MC-OPP-001</td><td>Northwind Technologies Inc.</td><td>250000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-11-01</td><td>In Progress</td><td>Sam Patel</td><td>2026-10-20T14:35:00Z</td><td>True</td></tr><tr><td>MC-OPP-002</td><td>Riverside Health</td><td>420000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-10-28</td><td>In Progress</td><td>Rachel Nguyen</td><td>2026-10-18T09:20:00Z</td><td>True</td></tr><tr><td>MC-OPP-003</td><td>Beacon Analytics</td><td>180000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-11-05</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-21T11:10:00Z</td><td>True</td></tr><tr><td>MC-OPP-004</td><td>Vista Logistics</td><td>615000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-10-25</td><td>In Progress</td><td>Rachel Nguyen</td><td>2026-10-15T16:50:00Z</td><td>True</td></tr><tr><td>MC-OPP-005</td><td>Harbor Financial Group</td><td>890000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-10</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-19T10:25:00Z</td><td>True</td></tr><tr><td>MC-OPP-006</td><td>Cedar Mountain Co-op</td><td>145000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-11-15</td><td>Not Started</td><td>Rachel Nguyen</td><td>2026-10-22T08:35:00Z</td><td>True</td></tr><tr><td>MC-OPP-007</td><td>Lakeside Media</td><td>320000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-10-30</td><td>In Progress</td><td>Sam Patel</td><td>2026-10-17T13:05:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-008</td><td>Summit Robotics</td><td>275000</td><td>Jordan Kim</td><td>Squad Alpha</td><td>2026-11-03</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-18T12:00:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-010</td><td>Delta Research Labs</td><td>500000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-08</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-17T14:00:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-011</td><td>Northwind Technologies</td><td>340000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-11-20</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-06T09:00:00Z</td><td>True</td></tr><tr class="row-flag"><td>MC-OPP-013</td><td>Meridian Energy</td><td>720000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-18</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-21T11:35:00Z</td><td>False</td></tr><tr class="row-held"><td>MC-OPP-014</td><td>Juniper Software</td><td>245000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-11-25</td><td>Not Started</td><td>Rachel Nguyen</td><td>2026-10-28T09:30:00Z</td><td>True</td></tr><tr class="row-held"><td>MC-OPP-015</td><td>Pacific Dental Group</td><td>195000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-11-12</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-28T09:00:00Z</td><td>True</td></tr></tbody></table></div>
+        <div class="raw-table-wrap"><table class='data-table'><thead><tr><th>mc_project_id</th><th>account</th><th>engagement_value</th><th>commercial_contact</th><th>delivery_squad</th><th>kickoff_date</th><th>project_status</th><th>program_lead</th><th>updated_at</th><th>handoff_received</th></tr></thead><tbody><tr><td>MC-OPP-001</td><td>Northwind Technologies Inc.</td><td>250000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-11-01</td><td>In Progress</td><td>Sam Patel</td><td>2026-10-20T14:35:00Z</td><td>True</td></tr><tr><td>MC-OPP-002</td><td>Riverside Health</td><td>420000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-10-28</td><td>In Progress</td><td>Rachel Nguyen</td><td>2026-10-18T09:20:00Z</td><td>True</td></tr><tr><td>MC-OPP-003</td><td>Beacon Analytics</td><td>180000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-11-05</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-21T11:10:00Z</td><td>True</td></tr><tr><td>MC-OPP-004</td><td>Vista Logistics</td><td>615000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-10-25</td><td>In Progress</td><td>Rachel Nguyen</td><td>2026-10-15T16:50:00Z</td><td>True</td></tr><tr><td>MC-OPP-005</td><td>Harbor Financial Group</td><td>890000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-10</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-19T10:25:00Z</td><td>True</td></tr><tr><td>MC-OPP-006</td><td>Cedar Mountain Co-op</td><td>145000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-11-15</td><td>Not Started</td><td>Rachel Nguyen</td><td>2026-10-22T08:35:00Z</td><td>True</td></tr><tr><td>MC-OPP-007</td><td>Lakeside Media</td><td>320000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-10-30</td><td>In Progress</td><td>Sam Patel</td><td>2026-10-17T13:05:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-008</td><td>Summit Robotics</td><td>275000</td><td>Jordan Kim</td><td>Squad Alpha</td><td>2026-11-03</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-18T12:00:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-010</td><td>Delta Research Labs</td><td>500000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-08</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-17T14:00:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-011</td><td>Northwind Technologies</td><td>340000</td><td>Priya Shah</td><td>Squad Alpha</td><td>2026-11-20</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-06T09:00:00Z</td><td>True</td></tr><tr class="row-flag"><td>MC-OPP-013</td><td>Meridian Energy</td><td>720000</td><td>Elena Rodriguez</td><td>Squad Delta</td><td>2026-11-18</td><td>Not Started</td><td>Devon Walsh</td><td>2026-10-21T11:35:00Z</td><td>False</td></tr><tr class="row-decision"><td>MC-OPP-014</td><td>Juniper Software</td><td>245000</td><td>Jordan Kim</td><td>Squad Beta</td><td>2026-11-25</td><td>Not Started</td><td>Rachel Nguyen</td><td>2026-10-28T09:30:00Z</td><td>True</td></tr><tr class="row-decision"><td>MC-OPP-015</td><td>Pacific Dental Group</td><td>195000</td><td>Marcus Chen</td><td>Squad Gamma</td><td>2026-11-12</td><td>Not Started</td><td>Sam Patel</td><td>2026-10-28T09:00:00Z</td><td>True</td></tr></tbody></table></div>
       </div>
     </div>
   </details>
 
   <footer>
-    <strong>Prototype, not production.</strong> Run ID: <code>ea315d80-ddc0-4728-a686-5f77f5f97f7d</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
+    <strong>Prototype, not production.</strong> Run ID: <code>3117bdf0-283f-4cf9-94aa-15abe6a98d9f</code>. Full audit log at <code>output/reconciliation_log.json</code>. In production, Slack is the notification channel, Salesforce is where resolution happens as a custom object, and this dashboard is observability — for people who want to understand the system, not operate it.
   </footer>
 
 </main>

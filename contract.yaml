@@ -15,7 +15,10 @@ shared_key:
 # Persistence threshold — the minimum age of a change before action
 # -------------------------------------------------------------------
 
-persistence_threshold_hours: 4
+persistence_threshold_hours:
+  field_discrepancy: 1
+  missing_record: 24
+  default: 4
 # Rationale: data entered minutes ago may not have propagated yet.
 # Acting on it would create false corrections. Reviewed quarterly.
 
