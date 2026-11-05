@@ -116,6 +116,7 @@ contract.yaml             # machine-readable SOP
 contracts.md              # human-readable SOP (the policy)
 field_mapping.yaml        # Salesforce ↔ Mission Control field name translation
 runbook.md                # human playbook for what to do when the engine flags
+events.md                 # design doc for the Salesforce event contract (future orchestration)
 data/                     # mock Salesforce and Mission Control exports
 output/                   # generated outputs (Slack messages, dashboard, JSON log)
 tests/                    # pytest unit tests for the classifier
@@ -202,7 +203,7 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 
 The architectural seam opened by `rules.py` points at a specific evolution path. Each step is deliberate, not reflexive.
 
-- **Event contract first, orchestration second.** Before adding an orchestrator, define the event contract the engine listens for. What happens when Salesforce emits "OPP-012 moved from Pending Approval to Approved"? Payload schema, required fields, permitted state transitions, idempotency behavior, failure modes. The event contract is the design artifact that makes any downstream orchestration (n8n, Temporal, Lambda) replaceable rather than coupled.
+- **Event contract first, orchestration second.** The design artifact is `events.md`, which specifies the `OpportunityStateChanged` event the engine would listen for once a real orchestration layer sits in front of it: payload schema, required fields, permitted state transitions, idempotency rules, ordering rules, failure modes, security considerations, and open questions for the real deployment. Defining the contract before picking the orchestrator keeps the orchestrator replaceable rather than coupled.
 - **HTTP wrapper around `rules.py`.** A small FastAPI service that exposes the classifier as `POST /classify` and returns the structured decision list. This keeps the business engine behind a stable interface so downstream callers do not import Python source. Any orchestrator calls the API; the API calls `rules.py`.
 - **Orchestrator (n8n, Temporal, or similar).** Receives Salesforce webhooks, validates the payload against the event contract, calls the HTTP wrapper, routes the decisions to Slack or an approval workflow. The orchestrator owns workflow state. The engine owns business decisions. Separation of concerns.
 - **Write-back layer with dry-run default.** Named in Known limitations. Appropriate once the orchestrator is in place, since write-backs should be driven by an orchestrated workflow rather than a batch script.
