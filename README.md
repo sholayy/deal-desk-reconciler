@@ -98,12 +98,19 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Eleven original unit tests cover the classifier: ownership rules in both directions, recency rules in both directions, the persistence threshold on field discrepancies and on missing records, missing records in both directions, contract gaps, matching values that produce nothing, and null-value handling. Six additional regression tests cover resolution chronology, true post-resolution recurrence, invalid dates, missing-record lifecycle identity, weekly warning accuracy, and simulated-run deduplication. The classifier and incident history are the key places that need regression protection.
+Twenty tests across three files cover different layers of protection.
+
+Eleven unit tests in `tests/test_classifier.py` cover specific classifier scenarios: ownership rules in both directions, recency rules in both directions, the persistence threshold on field discrepancies and on missing records, missing records in both directions, contract gaps, matching values that produce nothing, and null-value handling.
+
+Six regression tests in `tests/test_recurrence.py` cover the incident-lifecycle logic: resolution chronology, true post-resolution recurrence, invalid dates, missing-record lifecycle identity, weekly warning accuracy, and simulated-run deduplication.
+
+Three snapshot tests in `tests/test_regression.py` lock in the full classifier output against the project's mock inputs at a fixed `simulated_now`. If any future refactor changes what the classifier produces for these inputs, the snapshot test fails, so behavioral drift becomes a deliberate commit rather than an invisible regression. The baseline lives in `tests/snapshots/classifier_baseline.json` and is regenerated only when the output change is intended.
 
 ## What's in the box
 
 ```
-reconcile.py              # the engine (single file, five functions)
+rules.py                  # pure business logic (classifier, root-cause map, chronology)
+reconcile.py              # entry point that loads inputs, calls rules, writes outputs
 resolve.py                # CLI for appending a resolution to an audit log entry
 contract.yaml             # machine-readable SOP
 contracts.md              # human-readable SOP (the policy)
@@ -119,6 +126,8 @@ requirements-dev.txt      # runtime + pytest
 ## Design decisions worth naming
 
 **The SOP lives in two files.** `contracts.md` is for humans — it carries the reasoning, and it's where policy decisions get negotiated. `contract.yaml` is for the code — same rules, machine-readable. Separating them means non-engineers can own policy without touching code.
+
+**Business logic is a module, not a script.** The classifier, the root-cause mapping, and the chronology helpers live in `rules.py` with no file I/O, no Slack delivery, no HTML generation, and no module-level globals. `reconcile.py` is one caller: it loads CSVs, runs the rules, writes outputs. Other callers (an n8n workflow calling a Python node, a FastAPI service, a scheduled job in another language shelling out to Python, a unit test fixture) can import `rules.py` directly and apply the SOP without pulling in the I/O layer. This is the architectural seam that keeps future orchestration work cheap.
 
 **The engine proposes, it does not apply.** The classifier assigns `auto_correct` as a *decision* based on the SOP. Writing that decision back to Salesforce or Mission Control is a separate step that this prototype deliberately does not include. Dashboard and Slack language reflects this throughout: "corrections proposed" not "corrections applied."
 
@@ -188,6 +197,17 @@ Named explicitly because the signal is seeing the gaps, not hiding them.
 - **Recency uses record-level timestamps.** See Process-design opportunity B. Field-level change history or an authoritative contract version source are both proper fixes. Until then, favor the ownership rule where ambiguity matters.
 - **Missing field values are skipped silently.** When either side's value is `NaN`, the comparison is bypassed. That hides real data quality problems. The right fix: track skipped comparisons as a separate category and surface them in the weekly rollup.
 - **Test coverage is classifier-only.** The classifier has unit tests, but `emit_outputs`, `emit_weekly_rollup`, and `emit_dashboard` don't yet. Next step: integration tests that run the engine against a fixture directory and assert on the output files.
+
+## Where this goes next
+
+The architectural seam opened by `rules.py` points at a specific evolution path. Each step is deliberate, not reflexive.
+
+- **Event contract first, orchestration second.** Before adding an orchestrator, define the event contract the engine listens for. What happens when Salesforce emits "OPP-012 moved from Pending Approval to Approved"? Payload schema, required fields, permitted state transitions, idempotency behavior, failure modes. The event contract is the design artifact that makes any downstream orchestration (n8n, Temporal, Lambda) replaceable rather than coupled.
+- **HTTP wrapper around `rules.py`.** A small FastAPI service that exposes the classifier as `POST /classify` and returns the structured decision list. This keeps the business engine behind a stable interface so downstream callers do not import Python source. Any orchestrator calls the API; the API calls `rules.py`.
+- **Orchestrator (n8n, Temporal, or similar).** Receives Salesforce webhooks, validates the payload against the event contract, calls the HTTP wrapper, routes the decisions to Slack or an approval workflow. The orchestrator owns workflow state. The engine owns business decisions. Separation of concerns.
+- **Write-back layer with dry-run default.** Named in Known limitations. Appropriate once the orchestrator is in place, since write-backs should be driven by an orchestrated workflow rather than a batch script.
+
+Adopting all four turns this project from a reconciliation engine into a GTM Operations Automation System in the direction the later reviews pointed at. The step-by-step sequence keeps each addition reviewable and defensible on its own merits.
 
 ## Guiding principle
 
