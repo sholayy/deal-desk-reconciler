@@ -91,6 +91,25 @@ python3 reconcile.py --now "2026-10-30T13:30:00Z"
 
 Open `output/dashboard.html` and the OPP-012 card now carries the red "Still detected after recorded resolution" box with the resolution date, team, confirmed cause, corrective action, and a note that a later observation does not prove the fix failed.
 
+## Running the API
+
+The business logic in `rules.py` and `handoff/eligibility.py` is exposed over HTTP by a FastAPI service for orchestrators that cannot or should not import Python source directly. Three endpoints:
+
+- `GET /health` — operational readiness probe.
+- `POST /events/opportunity/approved` — validates a Salesforce `CommercialApprovalApproved` event and returns a structured eligibility decision.
+- `POST /reconcile` — accepts parallel lists of Salesforce and Mission Control records and returns the classified discrepancies.
+
+Run it:
+
+```bash
+pip install -r requirements.txt
+uvicorn api.main:app --reload
+```
+
+Then open `http://localhost:8000/docs` for the Swagger UI. The OpenAPI specification is at `/openapi.json`.
+
+Design notes and alternatives considered live in `docs/decisions/0001` (why event validation and reconciliation are separate endpoints) and `docs/decisions/0002` (why FastAPI specifically).
+
 ## Tests
 
 ```bash
@@ -106,6 +125,12 @@ Six regression tests in `tests/test_recurrence.py` cover the incident-lifecycle 
 
 Three snapshot tests in `tests/test_regression.py` lock in the full classifier output against the project's mock inputs at a fixed `simulated_now`. If any future refactor changes what the classifier produces for these inputs, the snapshot test fails, so behavioral drift becomes a deliberate commit rather than an invisible regression. The baseline lives in `tests/snapshots/classifier_baseline.json` and is regenerated only when the output change is intended.
 
+Fifteen handoff eligibility tests in `tests/test_handoff_eligibility.py` cover the rules implemented in `handoff/eligibility.py`: happy path, every rejection reason in the `EligibilityReason` enum, chronology edge cases (revocation of a different version, revocation before the approval, same-version supersession), rule ordering, and the timezone-naive boundary rejection.
+
+Twelve API boundary tests in `tests/test_api.py` cover each endpoint and its error paths: health, happy-path eligibility and reconciliation, malformed payloads returning 422, timezone-naive timestamps rejected at the boundary, business-rule rejections returning 200 with a structured reason, and an OpenAPI schema check that catches undocumented endpoints.
+
+Total: 47 tests across five files.
+
 ## What's in the box
 
 ```
@@ -116,7 +141,16 @@ contract.yaml             # machine-readable SOP
 contracts.md              # human-readable SOP (the policy)
 field_mapping.yaml        # Salesforce ↔ Mission Control field name translation
 runbook.md                # human playbook for what to do when the engine flags
-events.md                 # design doc for the Salesforce event contract (future orchestration)
+events.md                 # design doc for the Salesforce event contract (three separated state machines)
+handoff/                  # eligibility engine for Salesforce approval events
+  schemas.py              #   Pydantic models for event envelope and payload shapes
+  eligibility.py          #   pure business rules for handoff eligibility
+api/                      # FastAPI service exposing the business logic as HTTP
+  main.py                 #   /health, /events/opportunity/approved, /reconcile
+  schemas.py              #   request/response Pydantic models for reconciliation
+docs/decisions/           # Architecture Decision Records
+  0001-...md              #   why /events/opportunity is split from /reconcile
+  0002-...md              #   why FastAPI with these three endpoints
 data/                     # mock Salesforce and Mission Control exports
 output/                   # generated outputs (Slack messages, dashboard, JSON log)
 tests/                    # pytest unit tests for the classifier
