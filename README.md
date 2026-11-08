@@ -91,6 +91,18 @@ python3 reconcile.py --now "2026-10-30T13:30:00Z"
 
 Open `output/dashboard.html` and the OPP-012 card now carries the red "Still detected after recorded resolution" box with the resolution date, team, confirmed cause, corrective action, and a note that a later observation does not prove the fix failed.
 
+## Generating larger synthetic datasets
+
+The pinned CSVs under `data/` are 14 rows designed to trigger every classifier scenario once. For engineering work that needs volume (metrics with statistical power, failure-injection tests, Phase 2 integration testing), generate a larger dataset:
+
+```bash
+python3 -m data.generate --n 500 --seed 42 --output data/generated/
+```
+
+Output lands in `data/generated/` (gitignored, regenerate with the same seed to reproduce). The generator is deterministic given the seed and produces 500 opportunities with contract values drawn from a log-normal distribution, record ages from a gamma distribution, and intentional drift patterns (contract-value drift, missing MC records, contract gaps on handoff flags, owned-field drift) at configurable rates. See `docs/decisions/0003` for the distribution choices.
+
+Both `reconcile.py` and the `POST /reconcile` API endpoint accept generated data unchanged because the output schema matches the pinned CSVs.
+
 ## Running the API
 
 The business logic in `rules.py` and `handoff/eligibility.py` is exposed over HTTP by a FastAPI service for orchestrators that cannot or should not import Python source directly. Three endpoints:
@@ -129,7 +141,9 @@ Fifteen handoff eligibility tests in `tests/test_handoff_eligibility.py` cover t
 
 Twelve API boundary tests in `tests/test_api.py` cover each endpoint and its error paths: health, happy-path eligibility and reconciliation, malformed payloads returning 422, timezone-naive timestamps rejected at the boundary, business-rule rejections returning 200 with a structured reason, and an OpenAPI schema check that catches undocumented endpoints.
 
-Total: 47 tests across five files.
+Nine data generator tests in `tests/test_data_generator.py` verify the generator's contract: deterministic given a seed, different seeds produce different output, requested volume is honored exactly, drift rates are honored exactly, zero-drift produces a clean baseline, the schema matches what the classifier consumes, and generated data runs through the classifier without errors.
+
+Total: 56 tests across six files.
 
 ## What's in the box
 
@@ -151,7 +165,10 @@ api/                      # FastAPI service exposing the business logic as HTTP
 docs/decisions/           # Architecture Decision Records
   0001-...md              #   why /events/opportunity is split from /reconcile
   0002-...md              #   why FastAPI with these three endpoints
+  0003-...md              #   synthetic dataset generator design
 data/                     # mock Salesforce and Mission Control exports
+  generate.py             #   parameterized synthetic dataset generator
+  generated/              #   gitignored output dir for larger generated datasets
 output/                   # generated outputs (Slack messages, dashboard, JSON log)
 tests/                    # pytest unit tests for the classifier
 requirements.txt          # runtime dependencies
