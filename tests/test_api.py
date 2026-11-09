@@ -20,6 +20,7 @@ dispatch layer.
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import pytest
 from fastapi.testclient import TestClient
@@ -168,8 +169,8 @@ def test_revoked_approval_returns_eligible_false(client: TestClient):
 # -------------------------------------------------------------------
 
 def _reconcile_payload(
-    sf_records: list[dict] | None = None,
-    mc_records: list[dict] | None = None,
+    sf_records: Optional[list[dict]] = None,
+    mc_records: Optional[list[dict]] = None,
     run_timestamp: datetime = BASE_TIME,
 ) -> dict:
     return {
