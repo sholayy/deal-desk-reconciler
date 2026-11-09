@@ -274,20 +274,26 @@ def _check_no_active_handoff(
 ) -> EligibilityDecision:
     """
     Verify no active handoff already exists for this opportunity. A handoff
-    whose current_status is Accepted or ReturnedForRework is not active; a
-    returned handoff can be re-submitted and the lifecycle resumes.
+    whose current_status is Accepted already represents an established delivery
+    commitment and must block duplicate creation. ReturnedForRework blocks duplicate initiation for the same approved
+    contract version, but a newly approved version can begin a replacement.
     """
-    active_statuses = {HandoffStatus.SUBMITTED, HandoffStatus.ACKNOWLEDGED}
+    blocking_statuses = {HandoffStatus.SUBMITTED, HandoffStatus.ACKNOWLEDGED, HandoffStatus.ACCEPTED}
     for record in existing_handoffs:
         if record.opportunity_id != event.opportunity_id:
             continue
-        if record.current_status not in active_statuses:
-            continue
+        if record.current_status not in blocking_statuses:
+            # A returned handoff may be superseded by a new approved version,
+            # but resubmitting the same contract version should amend the
+            # existing handoff instead of creating a second one.
+            if not (record.current_status == HandoffStatus.RETURNED_FOR_REWORK and
+                    record.triggering_approved_contract_version == event.payload.approved_contract_version):
+                continue
         return EligibilityDecision(
             eligible=False,
             reason=EligibilityReason.HANDOFF_ALREADY_EXISTS,
             details=(
-                f"An active handoff for this opportunity already exists "
+                f"A handoff or delivery commitment for this opportunity already exists "
                 f"(status: {record.current_status.value}, submitted at "
                 f"{record.submitted_at.isoformat()}, triggered by approval event "
                 f"{record.triggering_approval_event_id}). Initiating a second handoff "

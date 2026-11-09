@@ -272,3 +272,20 @@ Measure success by how few preventable discrepancies the business continues to c
 The engine's observation history is append-oriented, but `resolve.py` annotates previously recorded entries with a resolution object. This is a pragmatic demo workflow rather than a tamper-proof append-only audit store. In production, separate append-only resolution events and verification outcomes from observation data, with actor identity and write permissions.
 
 The current root-cause category is a **hypothesis** based on the discrepancy type. Confirmation requires investigation and the documented root cause captured through `resolve.py`. Preventive success should be evaluated with multiple follow-up runs and metrics, not assumed from one quiet reporting week.
+
+
+## Engineering baseline audit (2026-11-08)
+
+The repository includes an independently reviewed proposed database ADR at
+`docs/decisions/0004-postgres-event-store-docker-compose.md`. It is **design only**;
+no PostgreSQL schema, migrations or durable worker are implemented yet.
+
+The API's reconciliation adapter must map Mission Control `commercial_contact`
+to the commercial owner concept. `program_lead` is an independent delivery role.
+The handoff eligibility engine blocks duplicate accepted commitments and prevents
+same-version re-creation after return for rework. Neither in-memory checks nor
+caller-supplied historical context guarantee production-safe authorization;
+transactional uniqueness and trusted persisted history remain next-phase work.
+
+The regression fixture belongs at `tests/snapshots/classifier_baseline.json`
+so a clean clone runs the complete test suite. Run `python -m pytest -q`.

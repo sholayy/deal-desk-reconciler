@@ -202,7 +202,7 @@ def test_reconcile_matching_records_returns_no_discrepancies(client: TestClient)
         "mc_project_id": "MC-OPP-100",
         "account": "Acme Robotics",
         "engagement_value": 100000.0,
-        "program_lead": "Alice",
+        "commercial_contact": "Alice",
         "updated_at": "2026-10-20T00:00:00Z",
     }
     response = client.post(
@@ -228,7 +228,7 @@ def test_reconcile_owned_field_mismatch_returns_discrepancy(client: TestClient):
         "mc_project_id": "MC-OPP-101",
         "account": "Zenith Software",
         "engagement_value": 250000.0,
-        "program_lead": "Jordan Kim",  # Mismatch with SF
+        "commercial_contact": "Jordan Kim",  # Mismatch with SF
         "updated_at": "2026-10-20T00:00:00Z",
     }
     response = client.post(
@@ -265,7 +265,7 @@ def test_reconcile_missing_sf_record_returns_flag(client: TestClient):
         "mc_project_id": "MC-OPP-200",
         "account": "Pacific Logistics",
         "engagement_value": 75000.0,
-        "program_lead": "Bob",
+        "commercial_contact": "Bob",
         "updated_at": "2026-09-01T00:00:00Z",
     }
     response = client.post(
@@ -296,3 +296,14 @@ def test_openapi_schema_lists_three_endpoints(client: TestClient):
     assert "/health" in paths
     assert "/events/opportunity/approved" in paths
     assert "/reconcile" in paths
+
+
+def test_reconcile_program_lead_is_not_commercial_owner(client: TestClient):
+    """Delivery's program lead is not the Salesforce commercial owner."""
+    sf = {"opportunity_id": "OPP-301", "opportunity_owner": "Priya Shah",
+          "last_modified_ts": "2026-10-20T00:00:00Z"}
+    mc = {"mc_project_id": "MC-OPP-301", "program_lead": "Jordan Kim",
+          "commercial_contact": "Priya Shah", "updated_at": "2026-10-20T00:00:00Z"}
+    response = client.post("/reconcile", json=_reconcile_payload(sf_records=[sf], mc_records=[mc]))
+    assert response.status_code == 200
+    assert not any(x["concept"] == "opportunity_owner" for x in response.json()["discrepancies"])

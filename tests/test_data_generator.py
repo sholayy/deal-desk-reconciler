@@ -177,9 +177,13 @@ def test_generated_data_runs_through_classifier_without_errors():
         "last_modified_ts": "last_modified_ts_sf",
         "handoff_submitted": "handoff_flag_sf",
     }
+    # commercial_contact is MC's mirror of SF's opportunity_owner. program_lead
+    # is an MC-only delivery role with no SF counterpart; it does not belong
+    # in this rename. The original version of this dict had program_lead here
+    # and masked the parallel bug in api/main.py (see AUDIT_NOTES).
     mc_renames = {
         "engagement_value": "contract_value_mc",
-        "program_lead": "opportunity_owner_mc",
+        "commercial_contact": "opportunity_owner_mc",
         "account": "customer_name_mc",
         "delivery_squad": "delivery_squad_mc",
         "updated_at": "last_modified_ts_mc",
@@ -217,8 +221,20 @@ def test_generated_data_runs_through_classifier_without_errors():
     }
     mapping = {}
     discrepancies = classify_discrepancies(joined, contract, mapping, ANCHOR_TIME)
-    # We do not assert specific counts; we assert the classifier returns
-    # a list without raising. If drift was injected at the requested rates,
-    # discrepancies should be present but the exact count depends on
-    # chronology interactions we do not want to pin here.
     assert isinstance(discrepancies, list)
+
+    # Tighter than the original assertion. The default DriftRates include
+    # owned_field_drift=0.08, which should produce several opportunity_owner
+    # discrepancies at n=100. Zero means the generator is injecting drift on
+    # a field the classifier does not compare, which is exactly the class of
+    # bug the reviewer identified in the API adapter. Catching it here would
+    # have surfaced the parallel bug in the generator before it shipped.
+    owner_discrepancies = [
+        d for d in discrepancies if d.get("concept") == "opportunity_owner"
+    ]
+    assert len(owner_discrepancies) > 0, (
+        "Generator produced zero opportunity_owner discrepancies despite "
+        "requesting owned_field_drift. The drift is being applied to a field "
+        "the classifier does not compare. The canonical mapping is "
+        "commercial_contact -> opportunity_owner_mc."
+    )

@@ -257,11 +257,30 @@ def generate_dataset(
     # a commercial owner, a contract value, and a last-modified timestamp.
     opportunity_ids = [f"OPP-{1000 + i:04d}" for i in range(n_opportunities)]
     customer_names = _generate_company_names(n_opportunities, rng)
-    owner_pool = _generate_owner_names(
-        min(n_opportunities, 20), rng
-    )  # ~20 distinct AEs so each owns multiple opps.
+
+    # Generate one combined pool of unique person names, then split it so
+    # commercial owners (the SF opportunity_owner concept, mirrored on MC as
+    # commercial_contact) and program leads (an MC-only delivery role) draw
+    # from disjoint slices. They are different roles filled by different
+    # people. Using the same pool masks the same class of field-mapping bug
+    # the reviewer caught in the API adapter: if the two concepts happen to
+    # match in the baseline, tests cannot tell whether the classifier compared
+    # the right fields.
+    _combined_name_pool = _generate_owner_names(
+        min(n_opportunities * 2, 40), rng
+    )
+    owner_pool_size = min(n_opportunities, 20)
+    program_lead_pool_size = min(max(n_opportunities // 2, 1), 15)
+    owner_pool = _combined_name_pool[:owner_pool_size]
+    program_lead_pool = _combined_name_pool[
+        owner_pool_size:owner_pool_size + program_lead_pool_size
+    ]
     owners = [owner_pool[i % len(owner_pool)] for i in range(n_opportunities)]
     rng.shuffle(owners)
+    program_leads = [
+        program_lead_pool[i % len(program_lead_pool)] for i in range(n_opportunities)
+    ]
+    rng.shuffle(program_leads)
 
     contract_values_usd = _sample_contract_values(n_opportunities, rng)
     sf_ages_hours = _sample_record_ages_hours(n_opportunities, rng)
@@ -296,7 +315,7 @@ def generate_dataset(
             "delivery_squad": _SQUAD_NAMES[i % len(_SQUAD_NAMES)],
             "kickoff_date": (sf_timestamps[i] + timedelta(days=14)).date().isoformat(),
             "project_status": "InProgress",
-            "program_lead": owners[i],  # Mirrors SF opportunity_owner initially.
+            "program_lead": program_leads[i],  # MC-only delivery role; distinct person from the commercial owner.
             "updated_at": (sf_timestamps[i] + timedelta(hours=float(rng.uniform(0, 4)))).isoformat(),
             "handoff_received": True,
         })
@@ -354,7 +373,13 @@ def generate_dataset(
                 break
     summary["drift_counts"]["contract_gap"] = n_contract_gap
 
-    # Owned field drift on commercial_contact (SF-owned concept).
+    # Owned-field drift on commercial_contact. The SOP designates
+    # opportunity_owner as a Salesforce-owned concept; MC's commercial_contact
+    # is the mirror. Drift here means MC's mirror disagrees with the
+    # authoritative SF value, which is exactly the owner-drift discrepancy
+    # the classifier is supposed to surface. Mutating program_lead instead
+    # (an MC-only field with no SF counterpart) produces no reconciliation
+    # signal and silently breaks volume-based metrics work. See AUDIT_NOTES.
     n_owned_drift = int(n_opportunities * drift_rates.owned_field_drift)
     owned_drift_idx = rng.choice(
         [i for i in all_indices if i not in missing_mc_idx],
@@ -363,10 +388,11 @@ def generate_dataset(
     for i in owned_drift_idx:
         for mc in mc_records:
             if mc["mc_project_id"] == f"MC-OPP-{1000 + int(i):04d}":
-                # Replace with a different owner from the pool.
-                current = mc["program_lead"]
+                # Replace with a different commercial owner from the pool so
+                # the classifier sees an actual mismatch against SF.
+                current = mc["commercial_contact"]
                 candidates = [o for o in owner_pool if o != current]
-                mc["program_lead"] = str(rng.choice(candidates))
+                mc["commercial_contact"] = str(rng.choice(candidates))
                 break
     summary["drift_counts"]["owned_field_drift"] = n_owned_drift
 

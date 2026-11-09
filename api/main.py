@@ -170,7 +170,7 @@ def _build_joined_dataframe(request: ReconcileRequest) -> pd.DataFrame:
     # Rename MC fields to the shared concept vocabulary with _mc suffix.
     mc_renames = {
         "engagement_value": "contract_value_mc",
-        "program_lead": "opportunity_owner_mc",
+        "commercial_contact": "opportunity_owner_mc",
         "account": "customer_name_mc",
         "delivery_squad": "delivery_squad_mc",
         "updated_at": "last_modified_ts_mc",
@@ -224,7 +224,7 @@ def _reconcile_contract() -> dict:
                 "rule": "ownership",
                 "owner": "mission_control",
                 "reason": "Delivery owns squad assignments.",
-                "salesforce_only": True,
+                "mission_control_only": True,
             },
         },
         "contract_gaps": {

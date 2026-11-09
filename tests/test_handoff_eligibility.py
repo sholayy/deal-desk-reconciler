@@ -324,3 +324,19 @@ def test_timezone_naive_emitted_at_rejected_by_schema():
     """
     with pytest.raises(Exception):
         _make_approval(emitted_at=datetime(2026, 11, 5, 14, 23, 17))  # No tzinfo
+
+
+@pytest.mark.parametrize("state", [HandoffStatus.ACCEPTED, HandoffStatus.RETURNED_FOR_REWORK])
+def test_existing_commitment_or_rework_cannot_start_new_handoff(state):
+    """An accepted or returned handoff must not spawn a second project."""
+    approval = _make_approval()
+    prior = HandoffRecord(
+        opportunity_id=approval.opportunity_id,
+        triggering_approval_event_id="evt_prior",
+        triggering_approved_contract_version="v3",
+        submitted_at=BASE_TIME,
+        current_status=state,
+    )
+    decision = evaluate_eligibility(approval, existing_handoffs=[prior])
+    assert not decision.eligible
+    assert decision.reason == EligibilityReason.HANDOFF_ALREADY_EXISTS
