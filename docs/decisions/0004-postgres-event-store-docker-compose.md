@@ -51,7 +51,7 @@ Rejected. The query patterns Phase 3 and Phase 4 need (open-discrepancy counts b
 
 ### Alternative 4: Full event sourcing with CQRS and projections
 
-Rejected on the same grounds as in ADR 0001. Full event sourcing means every state change is an event, state is a projection, and projections are rebuildable by replaying the log. Powerful, and overkill for the invariants this project needs to hold. The append-only observations table plus the resolution-events table plus the derived discrepancies table captures the operational insight ("recurring incident," "time to resolution," "SLA breach") without demanding projection rebuilds.
+Rejected on the same grounds as in ADR 0001. Full event sourcing means every state change is an event, state is a projection, and projections are rebuildable by replaying the log. Powerful, and overkill for the invariants this project needs to hold. The append-only evidence (source events, observations, classification_decisions, resolution_events) plus the mutable incident projection linked by incident_occurrences captures the operational insight ("recurring incident," "time to resolution," "SLA breach") without demanding full event-source replay semantics.
 
 ### Alternative 5: Postgres via native install (Homebrew, apt)
 

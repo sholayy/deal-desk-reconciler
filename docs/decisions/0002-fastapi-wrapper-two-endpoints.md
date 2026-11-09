@@ -63,8 +63,8 @@ Rejected because the API has different lifecycle concerns (HTTP, request validat
 - Run locally with `uvicorn api.main:app --reload`.
 - Swagger UI is at `http://localhost:8000/docs`.
 - Health check is at `/health`; suitable for load balancer liveness probes.
-- No authentication is configured. This is intentional for Phase 1 (local development only). ADR 0003 will cover authentication choices (HMAC from Salesforce, JWT via an internal issuer, or API keys) and must be in place before any non-local deployment.
-- No rate limiting. Same reasoning; ADR 0003 territory.
+- No authentication is configured. This is intentional for Phase 1 (local development only). Authentication choices (HMAC from Salesforce, JWT via an internal issuer, or API keys) must be defined in a dedicated future ADR before any non-local deployment.
+- No rate limiting. Same reasoning; a future ADR.
 
 ## References
 

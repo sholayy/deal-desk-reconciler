@@ -21,7 +21,7 @@ These are not variations of the same operation. They have different authenticati
 
 Expose them as two separate HTTP endpoints, backed by two separate Python modules:
 
-- `POST /events/opportunity` — receives a Salesforce event (defined in `events.md`), validates its envelope and payload against the appropriate Pydantic schemas, runs the eligibility rules in `handoff.eligibility`, and returns a structured `EligibilityDecision`.
+- `POST /events/opportunity/approved` — receives a Salesforce `CommercialApprovalApprovedEvent` (defined in `events.md`), validates its envelope and payload against the Pydantic schemas in `handoff/schemas.py`, runs the eligibility rules in `handoff.eligibility`, and returns a structured `EligibilityDecision`. The endpoint is named for its specific event type, following the convention `POST /events/opportunity/<event-type>`. Each event type (approval, revocation, stage change, handoff submission) gets its own endpoint rather than sharing one that dispatches on `event_type` in the payload. This keeps each endpoint's request schema, failure modes, and audit trail tied to one event type, which matches the per-endpoint discipline the rest of this ADR argues for.
 - `POST /reconcile` — receives a joined representation of Salesforce and Mission Control records, calls `rules.classify_discrepancies`, and returns the structured discrepancy list.
 
 The two endpoints share the same FastAPI application but no shared business logic. Each has its own request/response schema, its own test suite, and its own failure modes.
@@ -62,7 +62,7 @@ Rejected because:
 - Each endpoint is independently testable. The 35 tests we have today split cleanly across the two modules without overlap.
 - Pydantic can enforce precise schemas for each shape. Validation errors carry per-field context.
 - The audit log carries a stable `endpoint` identifier, so metrics can measure event ingestion and reconciliation separately.
-- Future orchestration work (an n8n workflow calling `/events/opportunity`, a scheduled job calling `/reconcile`) can route to the right endpoint without inspecting payload shape.
+- Future orchestration work (an n8n workflow calling `/events/opportunity/approved`, a scheduled job calling `/reconcile`) can route to the right endpoint without inspecting payload shape.
 - The documentation surface is clean: two endpoints, two responsibilities, two sets of error semantics.
 
 ### Negative
@@ -75,11 +75,11 @@ Rejected because:
 
 - The deployment unit stays the same (one FastAPI application, one container).
 - The monitoring surface grows: separate dashboards for event validation volume and reconciliation volume.
-- The incident response runbook grows: a 5xx from `/events/opportunity` and a 5xx from `/reconcile` have different investigation paths.
+- The incident response runbook grows: a 5xx from any `/events/opportunity/<event-type>` and a 5xx from `/reconcile` have different investigation paths.
 
 ## References
 
-- `events.md`: event contract definition that drives `/events/opportunity`.
+- `events.md`: event contract definition that drives the `/events/opportunity/<event-type>` endpoints.
 - `rules.py`: pure business logic the reconciler calls.
 - `handoff/eligibility.py`: eligibility rules the event validator calls.
 - Reviewer feedback (external, 2026-11-05) that identified this conflation as the first architectural problem to resolve.
