@@ -6,7 +6,7 @@ A reconciliation engine for two operational systems that do not sync. Instead of
 
 The engine proposes corrections. It does not apply them. The write-back layer exists in design but not in code.
 
-[→ Live dashboard](./output/dashboard.html) · produced by one run against the pinned mock data in `/data/`.
+[→ Live dashboard](https://sholayy.github.io/deal-desk-reconciler/output/dashboard.html) · produced by one run against the pinned mock data in `/data/`.
 
 ## The problem
 
