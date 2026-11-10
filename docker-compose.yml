@@ -1,0 +1,36 @@
+# Local development stack for the Deal Desk Reconciler.
+#
+# One service for now: PostgreSQL 16, with a named volume so data survives
+# container restarts. The database runs on port 5432 (standard) so psql,
+# DataGrip, or any libpq client connects without configuration.
+#
+# Usage:
+#   docker compose up -d        # start Postgres in the background
+#   docker compose down         # stop containers (data persists)
+#   docker compose down -v      # stop AND wipe the volume (fresh start)
+#
+# ADR: docs/decisions/0004-postgres-event-store-docker-compose.md
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: deal-desk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-deal_desk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deal_desk_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-deal_desk}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - deal_desk_pgdata:/var/lib/postgresql/data
+      - ./scripts/create_test_db.sh:/docker-entrypoint-initdb.d/00-create-test-db.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-deal_desk}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  deal_desk_pgdata:
+    name: deal_desk_pgdata
