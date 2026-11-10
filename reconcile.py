@@ -25,6 +25,12 @@ import requests
 import yaml
 from dateutil import parser as date_parser
 
+# Shared configuration loader and dataframe normalizer. Before this module
+# landed, reconcile.py loaded field_mapping.yaml inline and carried its own
+# copy of the rename logic. The API adapter and the synthetic generator
+# shipped bugs because they re-implemented that logic independently.
+from config import load_config, normalize_dataframes
+
 # Pure business logic lives in rules.py so any caller (n8n, FastAPI, a
 # scheduled job, a test) can import and apply the SOP without pulling in the
 # I/O layer. reconcile.py is one caller: it loads CSVs, runs the classifier,
@@ -100,57 +106,19 @@ def _set_salesforce_base_url(contract):
 
 def load_data():
     """
-    Reads the two CSV exports and the two YAML configs.
-
-    Applies the field mapping so Mission Control columns are renamed to
-    the SOP's concept names. From this point onwards, both dataframes
-    speak the same vocabulary.
+    Reads the two CSV exports and delegates YAML loading and column
+    renaming to the shared config module. The return shape is preserved
+    so downstream callers (dashboard, Slack, audit log) are untouched.
     """
-
-    with open(CONTRACT_YAML, "r") as f:
-        contract = yaml.safe_load(f)
-
-    with open(FIELD_MAPPING_YAML, "r") as f:
-        mapping = yaml.safe_load(f)
-
+    cfg = load_config()
     sf_df = pd.read_csv(SALESFORCE_CSV)
     mc_df = pd.read_csv(MISSION_CONTROL_CSV)
-
-    mc_prefix = mapping["shared_key"]["mc_prefix"]
-    mc_id_col = mapping["shared_key"]["mission_control"]
-    mc_df[mc_id_col] = mc_df[mc_id_col].str.replace(mc_prefix, "", regex=False)
-
-    sf_id_col = mapping["shared_key"]["salesforce"]
-    mc_df = mc_df.rename(columns={mc_id_col: sf_id_col})
-
-    sf_ts_col = mapping["timestamps"]["salesforce"]
-    mc_ts_col = mapping["timestamps"]["mission_control"]
-    mc_df = mc_df.rename(columns={mc_ts_col: f"{sf_ts_col}_mc"})
-    sf_df = sf_df.rename(columns={sf_ts_col: f"{sf_ts_col}_sf"})
-
-    concept_rename_sf = {}
-    concept_rename_mc = {}
-
-    for concept, cols in mapping["concepts"].items():
-        if cols["salesforce"] is not None:
-            concept_rename_sf[cols["salesforce"]] = f"{concept}_sf"
-        if cols["mission_control"] is not None:
-            concept_rename_mc[cols["mission_control"]] = f"{concept}_mc"
-
-    sf_df = sf_df.rename(columns=concept_rename_sf)
-    mc_df = mc_df.rename(columns=concept_rename_mc)
-
-    for gap_name, cols in mapping.get("contract_gap_fields", {}).items():
-        if cols["salesforce"] is not None:
-            sf_df = sf_df.rename(columns={cols["salesforce"]: f"{gap_name}_sf"})
-        if cols["mission_control"] is not None:
-            mc_df = mc_df.rename(columns={cols["mission_control"]: f"{gap_name}_mc"})
-
+    sf_df, mc_df = normalize_dataframes(sf_df, mc_df, cfg.mapping)
     return {
         "sf_df": sf_df,
         "mc_df": mc_df,
-        "contract": contract,
-        "mapping": mapping,
+        "contract": cfg.contract,
+        "mapping": cfg.mapping,
     }
 
 
