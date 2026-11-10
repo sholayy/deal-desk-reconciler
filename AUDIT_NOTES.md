@@ -22,23 +22,25 @@ Scope: second-pass audit by the primary engineer, applied to the reviewed workin
 - Tightened `test_generated_data_runs_through_classifier_without_errors`: now asserts that non-zero `owned_field_drift` produces at least one `opportunity_owner` discrepancy. The previous assertion (`isinstance(discrepancies, list)`) tolerated semantically meaningless output.
 - Deleted the dead duplicate at `snapshots/classifier_baseline.json` (project root). The authoritative copy lives at `tests/snapshots/classifier_baseline.json`, which `tests/test_regression.py` reads.
 
-## Known structural issue, deferred
+## Structural issue, resolved — 2026-11-10
 
-Field mapping and classification rules are duplicated in Python in three places that each shadow a YAML source of truth:
+The YAML duplication across `api/main.py`, `data/generate.py`, and (inline in) `reconcile.py` has been consolidated behind a single validated loader. See ADR 0005. Phases A through F landed in sequence:
 
-- `api/main.py`'s `_reconcile_contract()` hardcodes a subset of `contract.yaml`.
-- `api/main.py`'s adapter hardcodes field renames that `field_mapping.yaml` already defines.
-- `data/generate.py` hardcodes MC concept names a third time.
+- Phase A: `config.py` with `load_config`, validators, and `normalize_dataframes`. 8 new tests.
+- Phase B: `data/generate.py` reads native column names from `field_mapping.yaml`.
+- Phase C: `api/main.py` adapter delegates renames to `normalize_dataframes`.
+- Phase D: `api/main.py` loads the full `contract.yaml` instead of a four-field subset.
+- Phase E: `reconcile.load_data` delegates YAML loading and renames to the shared module.
+- Phase F: ADR 0005 landed. `tests/test_equivalence.py` proves the API and CSV paths produce the same classification for the same input.
 
-The Phase 0 `reconcile.py` does the right thing: it loads `field_mapping.yaml` and renames concepts dynamically. Both the API adapter and the generator should follow that pattern. Not changed in this pass to keep the Phase 2 Postgres work the next item of substance rather than a refactor-and-then-Postgres compound change. Tracked for a follow-up ADR.
+68 tests passing after the refactor. The two bugs that motivated this work (commercial_contact mapping in the API, owned-field drift target in the generator) cannot recur in that shape because the shared loader is now the only place field mappings live.
 
 ## Important unaddressed risks
 
 1. Eligibility context is supplied by callers and may be omitted or empty; absence of known history is not verified absence. Do not attach real delivery-creation side effects until history is retrieved from a trusted durable store, with fail-closed authorization.
 2. Contract value uses floating point in parts of the API; upgrade to Decimal, define currency/contract authority, and avoid recency-driven financial writebacks.
-3. The API's default rules are duplicated in Python rather than loaded/versioned from `contract.yaml`. Prevent configuration drift before exposing the API for operational use.
-4. The project does not yet implement PostgreSQL, Alembic migrations, durable delivery-action idempotency, retry leases, or production authorization.
-5. Existing CSV and dashboard output is demo evidence, not real operational performance.
+3. The project does not yet implement PostgreSQL, Alembic migrations, durable delivery-action idempotency, retry leases, or production authorization.
+4. Existing CSV and dashboard output is demo evidence, not real operational performance.
 
 ## Validation
 
