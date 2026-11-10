@@ -183,50 +183,12 @@ def _build_joined_dataframe(request: ReconcileRequest) -> pd.DataFrame:
 
 def _reconcile_contract() -> dict:
     """
-    Minimal contract.yaml-equivalent for the API's default use. Callers
-    can send their own contract in the request later; for Phase 1 we use
-    the same rules as contract.yaml so behavior matches the batch engine.
-    Keeping this inline avoids coupling the API to the YAML file on disk.
+    Return the full validated contract loaded from contract.yaml at app
+    startup. Previously this function hardcoded a four-field subset; the
+    audit trail is in AUDIT_NOTES.md. The new path classifies against
+    every field the SOP governs.
     """
-    return {
-        "persistence_threshold_hours": {
-            "field_discrepancy": 1,
-            "missing_record": 24,
-            "default": 4,
-        },
-        "fields": {
-            "contract_value": {
-                "rule": "recency",
-                "reason": "AE may renegotiate post-approval; the more recent value is the current truth.",
-            },
-            "opportunity_owner": {
-                "rule": "ownership",
-                "owner": "salesforce",
-                "reason": "GTM owner is set in Salesforce and governed by Sales management.",
-            },
-            "customer_name": {
-                "rule": "ownership",
-                "owner": "salesforce",
-                "reason": "Commercial record is the legal entity source.",
-            },
-            "delivery_squad": {
-                "rule": "ownership",
-                "owner": "mission_control",
-                "reason": "Delivery owns squad assignments.",
-                "mission_control_only": True,
-            },
-        },
-        "contract_gaps": {
-            "handoff_flag": {
-                "reason": (
-                    "Named similarly but mean different things. Salesforce indicates the "
-                    "commercial side has pushed the handoff; Mission Control indicates the "
-                    "delivery team has acknowledged receipt. The SOP has not decided whether "
-                    "these should be mirrored or kept separate. Flag until resolved."
-                ),
-            },
-        },
-    }
+    return _CONFIG.contract
 
 
 @app.post(
