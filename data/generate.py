@@ -83,6 +83,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from config import load_config
+
 
 # -------------------------------------------------------------------
 # Name pools
@@ -253,6 +255,36 @@ def generate_dataset(
 
     rng = np.random.default_rng(random_seed)
 
+    # Load the validated field mapping. Every native source-system column
+    # name below comes from field_mapping.yaml, not a hardcoded literal.
+    # The reviewer's integrity audit (see AUDIT_NOTES) traced the owned-field
+    # drift bug back to three places that each hardcoded their own view of
+    # what MC calls the commercial owner. The generator is one of them; this
+    # block is the fix.
+    _cfg = load_config()
+    _m = _cfg.mapping
+    _concepts = _m["concepts"]
+    _gaps = _m["contract_gap_fields"]
+    SF_ID = _m["shared_key"]["salesforce"]
+    MC_ID = _m["shared_key"]["mission_control"]
+    MC_PREFIX = _m["shared_key"].get("mc_prefix", "")
+    SF_TS = _m["timestamps"]["salesforce"]
+    MC_TS = _m["timestamps"]["mission_control"]
+    CUSTOMER_NAME_SF = _concepts["customer_name"]["salesforce"]
+    CUSTOMER_NAME_MC = _concepts["customer_name"]["mission_control"]
+    CONTRACT_VALUE_SF = _concepts["contract_value"]["salesforce"]
+    CONTRACT_VALUE_MC = _concepts["contract_value"]["mission_control"]
+    APPROVAL_STATUS_SF = _concepts["commercial_approval_status"]["salesforce"]
+    OPP_OWNER_SF = _concepts["opportunity_owner"]["salesforce"]
+    OPP_OWNER_MC = _concepts["opportunity_owner"]["mission_control"]
+    STAGE_SF = _concepts["stage"]["salesforce"]
+    DELIVERY_SQUAD_MC = _concepts["delivery_squad"]["mission_control"]
+    KICKOFF_DATE_MC = _concepts["kickoff_date"]["mission_control"]
+    PROJECT_STATUS_MC = _concepts["project_status"]["mission_control"]
+    PROGRAM_LEAD_MC = _concepts["program_lead"]["mission_control"]
+    HANDOFF_SF = _gaps["handoff_flag"]["salesforce"]
+    HANDOFF_MC = _gaps["handoff_flag"]["mission_control"]
+
     # Base opportunity population: each opp gets an ID, a customer name,
     # a commercial owner, a contract value, and a last-modified timestamp.
     opportunity_ids = [f"OPP-{1000 + i:04d}" for i in range(n_opportunities)]
@@ -293,14 +325,14 @@ def generate_dataset(
     sf_records = []
     for i in range(n_opportunities):
         sf_records.append({
-            "opportunity_id": opportunity_ids[i],
-            "customer_name": customer_names[i],
-            "contract_value_usd": contract_values_usd[i],
-            "commercial_approval_status": "Approved",
-            "opportunity_owner": owners[i],
-            "stage": "Approved",
-            "last_modified_ts": sf_timestamps[i].isoformat(),
-            "handoff_submitted": True,
+            SF_ID: opportunity_ids[i],
+            CUSTOMER_NAME_SF: customer_names[i],
+            CONTRACT_VALUE_SF: contract_values_usd[i],
+            APPROVAL_STATUS_SF: "Approved",
+            OPP_OWNER_SF: owners[i],
+            STAGE_SF: "Approved",
+            SF_TS: sf_timestamps[i].isoformat(),
+            HANDOFF_SF: True,
             "sf_record_id": f"0066g000{1000 + i:07d}",
         })
 
@@ -308,16 +340,16 @@ def generate_dataset(
     mc_records = []
     for i in range(n_opportunities):
         mc_records.append({
-            "mc_project_id": f"MC-OPP-{1000 + i:04d}",
-            "account": customer_names[i],
-            "engagement_value": contract_values_usd[i],
-            "commercial_contact": owners[i],
-            "delivery_squad": _SQUAD_NAMES[i % len(_SQUAD_NAMES)],
-            "kickoff_date": (sf_timestamps[i] + timedelta(days=14)).date().isoformat(),
-            "project_status": "InProgress",
-            "program_lead": program_leads[i],  # MC-only delivery role; distinct person from the commercial owner.
-            "updated_at": (sf_timestamps[i] + timedelta(hours=float(rng.uniform(0, 4)))).isoformat(),
-            "handoff_received": True,
+            MC_ID: f"{MC_PREFIX}OPP-{1000 + i:04d}",
+            CUSTOMER_NAME_MC: customer_names[i],
+            CONTRACT_VALUE_MC: contract_values_usd[i],
+            OPP_OWNER_MC: owners[i],
+            DELIVERY_SQUAD_MC: _SQUAD_NAMES[i % len(_SQUAD_NAMES)],
+            KICKOFF_DATE_MC: (sf_timestamps[i] + timedelta(days=14)).date().isoformat(),
+            PROJECT_STATUS_MC: "InProgress",
+            PROGRAM_LEAD_MC: program_leads[i],  # MC-only delivery role; distinct person from the commercial owner.
+            MC_TS: (sf_timestamps[i] + timedelta(hours=float(rng.uniform(0, 4)))).isoformat(),
+            HANDOFF_MC: True,
         })
 
     # Inject drift patterns. Each is a deliberate modification of the
@@ -341,13 +373,13 @@ def generate_dataset(
     contract_drift_idx = rng.choice(all_indices, size=n_contract_drift, replace=False)
     for i in contract_drift_idx:
         shift_pct = rng.uniform(0.05, 0.15) * rng.choice([-1, 1])
-        mc_records[i]["engagement_value"] = round(
-            mc_records[i]["engagement_value"] * (1 + shift_pct)
+        mc_records[i][CONTRACT_VALUE_MC] = round(
+            mc_records[i][CONTRACT_VALUE_MC] * (1 + shift_pct)
         )
         # Ensure MC's updated_at is older than SF's last_modified_ts so
         # the recency rule picks SF. This models the realistic case where
         # the AE renegotiated after approval and SF holds the newer truth.
-        mc_records[i]["updated_at"] = (
+        mc_records[i][MC_TS] = (
             sf_timestamps[i] - timedelta(hours=float(rng.uniform(2, 48)))
         ).isoformat()
     summary["drift_counts"]["contract_value_drift"] = n_contract_drift
@@ -368,8 +400,8 @@ def generate_dataset(
         # Find the mc record for this opportunity (they may have been
         # filtered out already; skip if so).
         for mc in mc_records:
-            if mc["mc_project_id"] == f"MC-OPP-{1000 + int(i):04d}":
-                mc["handoff_received"] = False
+            if mc[MC_ID] == f"{MC_PREFIX}OPP-{1000 + int(i):04d}":
+                mc[HANDOFF_MC] = False
                 break
     summary["drift_counts"]["contract_gap"] = n_contract_gap
 
@@ -387,12 +419,12 @@ def generate_dataset(
     )
     for i in owned_drift_idx:
         for mc in mc_records:
-            if mc["mc_project_id"] == f"MC-OPP-{1000 + int(i):04d}":
+            if mc[MC_ID] == f"{MC_PREFIX}OPP-{1000 + int(i):04d}":
                 # Replace with a different commercial owner from the pool so
                 # the classifier sees an actual mismatch against SF.
-                current = mc["commercial_contact"]
+                current = mc[OPP_OWNER_MC]
                 candidates = [o for o in owner_pool if o != current]
-                mc["commercial_contact"] = str(rng.choice(candidates))
+                mc[OPP_OWNER_MC] = str(rng.choice(candidates))
                 break
     summary["drift_counts"]["owned_field_drift"] = n_owned_drift
 
