@@ -21,6 +21,7 @@ import pandas as pd
 from fastapi import FastAPI, status
 from fastapi.responses import JSONResponse
 
+from config import load_config, normalize_dataframes
 from handoff.eligibility import evaluate_eligibility
 from rules import classify_discrepancies as _classify
 
@@ -32,6 +33,14 @@ from api.schemas import (
     ReconcileRequest,
     ReconcileResponse,
 )
+
+
+# Load and validate configuration at module import. The reviewer asked for
+# this pattern so every classification call runs against a specific validated
+# configuration rather than reading YAML on each request. If the YAMLs are
+# structurally invalid, the app refuses to start rather than returning
+# subtly wrong decisions.
+_CONFIG = load_config()
 
 
 app = FastAPI(
@@ -132,56 +141,36 @@ def _build_joined_dataframe(request: ReconcileRequest) -> pd.DataFrame:
     Convert the API's two parallel lists of records into the joined
     DataFrame shape rules.classify_discrepancies currently expects.
 
-    This adapter is explicitly small and lives in the API boundary so the
-    eventual refactor (making rules.py take native Python records directly)
-    has one clear place to land. Removing this function would be a
-    one-commit change. That is the intended design.
+    This adapter is explicitly small and lives in the API boundary. All
+    the concept renames (SF columns to <concept>_sf, MC columns to
+    <concept>_mc, MC prefix stripping) now live in config.normalize_dataframes
+    so the API, the batch loader, and the synthetic generator use the same
+    transformation. The previous version of this function duplicated those
+    renames inline and shipped a mapping bug; the audit trail is in
+    AUDIT_NOTES.md.
 
-    The transformations here mirror what reconcile.load_data does with the
-    CSV files: Mission Control's 'mc_project_id' becomes 'opportunity_id'
-    after the MC- prefix is stripped, concept names are suffixed with _sf
-    or _mc, timestamps are coerced back to ISO strings (because the
-    classifier expects strings), and empty inputs still produce a DataFrame
-    with the join column so the merge does not raise.
+    Empty inputs still produce a DataFrame with the join column so the
+    merge does not raise. Timestamps are coerced back to ISO strings before
+    normalization because the classifier parses them with dateutil.
     """
-    sf_dicts = _records_to_dicts(request.salesforce_records, "last_modified_ts")
-    mc_dicts = _records_to_dicts(request.mission_control_records, "updated_at")
+    mapping = _CONFIG.mapping
+    sf_ts = mapping["timestamps"]["salesforce"]
+    mc_ts = mapping["timestamps"]["mission_control"]
+    sf_id = mapping["shared_key"]["salesforce"]
+    mc_id = mapping["shared_key"]["mission_control"]
 
-    # Build the frames with the join column always present, even when empty.
-    sf_df = pd.DataFrame(sf_dicts) if sf_dicts else pd.DataFrame(columns=["opportunity_id"])
-    mc_df = pd.DataFrame(mc_dicts) if mc_dicts else pd.DataFrame(columns=["mc_project_id"])
+    sf_dicts = _records_to_dicts(request.salesforce_records, sf_ts)
+    mc_dicts = _records_to_dicts(request.mission_control_records, mc_ts)
 
-    # Derive opportunity_id on the MC side by stripping the "MC-" prefix.
-    if not mc_df.empty:
-        mc_df["opportunity_id"] = mc_df["mc_project_id"].str.replace("MC-", "", regex=False)
-    else:
-        mc_df["opportunity_id"] = pd.Series(dtype=str)
+    # Build the frames with the join column always present, even when empty,
+    # so the downstream merge does not raise on an empty side.
+    sf_df = pd.DataFrame(sf_dicts) if sf_dicts else pd.DataFrame(columns=[sf_id])
+    mc_df = pd.DataFrame(mc_dicts) if mc_dicts else pd.DataFrame(columns=[mc_id])
 
-    # Rename SF fields to the shared concept vocabulary with _sf suffix.
-    sf_renames = {
-        "contract_value_usd": "contract_value_sf",
-        "opportunity_owner": "opportunity_owner_sf",
-        "customer_name": "customer_name_sf",
-        "last_modified_ts": "last_modified_ts_sf",
-        "handoff_submitted": "handoff_flag_sf",
-    }
-    sf_df = sf_df.rename(columns={k: v for k, v in sf_renames.items() if k in sf_df.columns})
-
-    # Rename MC fields to the shared concept vocabulary with _mc suffix.
-    mc_renames = {
-        "engagement_value": "contract_value_mc",
-        "commercial_contact": "opportunity_owner_mc",
-        "account": "customer_name_mc",
-        "delivery_squad": "delivery_squad_mc",
-        "updated_at": "last_modified_ts_mc",
-        "handoff_received": "handoff_flag_mc",
-    }
-    mc_df = mc_df.rename(columns={k: v for k, v in mc_renames.items() if k in mc_df.columns})
-    if "mc_project_id" in mc_df.columns:
-        mc_df = mc_df.drop(columns=["mc_project_id"])
+    sf_df, mc_df = normalize_dataframes(sf_df, mc_df, mapping)
 
     joined = pd.merge(
-        sf_df, mc_df, on="opportunity_id", how="outer", indicator=True,
+        sf_df, mc_df, on=sf_id, how="outer", indicator=True,
     )
     joined = joined.rename(columns={"_merge": "presence"})
     joined["presence"] = joined["presence"].map({
