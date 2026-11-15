@@ -6,7 +6,7 @@ A reconciliation engine for two operational systems that do not sync. Instead of
 
 The engine proposes corrections. It does not apply them. The write-back layer exists in design but not in code.
 
-[→ Live dashboard](https://sholayy.github.io/deal-desk-reconciler/output/dashboard.html) · produced by one run against the pinned mock data in `/data/`.
+[→ Live dashboard](./output/dashboard.html) · produced by one run against the pinned mock data in `/data/`.
 
 ## The problem
 
@@ -30,15 +30,15 @@ An implemented control is not a verified control. The weekly rollup gives early 
 
 ### Classification
 
-Every disagreement lands in one of five buckets. Two propose auto-corrections. Two route to a human with a specific action. One holds while the SOP's persistence window elapses.
+Every disagreement lands in one of five buckets, each paired with an action. Two propose auto-corrections. Two route to a human with a specific action. One holds while the SOP's persistence window elapses.
 
 | Bucket | Trigger | Action |
 | --- | --- | --- |
-| `auto_correct_ownership` | SOP names one system as owner of the field | Engine proposes correction to the non-owning system |
-| `auto_correct_recency` | SOP marks the field as shared; one side is clearly fresher | Engine proposes the newer value wins |
-| `flag_contract_gap` | SOP has not resolved who owns the field | Human escalation with the open policy question named |
-| `flag_missing_record` | One system has a record the other does not | Human escalation; engine refuses to create records |
-| `hold` | Change is younger than the SOP's persistence threshold for its bucket | No action; recheck on the next run |
+| `owned_field` | SOP names one system as owner of the field | `auto_correct`: engine proposes correction to the non-owning system |
+| `shared_field` | SOP marks the field as shared; one side is clearly fresher | `auto_correct`: engine proposes the newer value wins |
+| `contract_gap` | SOP has not resolved who owns the field | `flag`: human escalation with the open policy question named |
+| `missing_record` | One system has a record the other does not | `flag`: human escalation; engine refuses to create records |
+| `below_threshold` | Change is younger than the SOP's persistence threshold for its bucket | `hold`: no action; recheck on the next run |
 
 Each discrepancy also carries one of five root-cause categories: `policy_ambiguity`, `workflow_gap`, `ownership_or_sync_gap`, `sync_lag_or_process_gap`, `pending_stabilization`. The category is a hypothesis for investigation, not an established diagnosis. The weekly rollup groups recurring incidents by category so a reviewer sees which structural fix would retire the most incidents at once.
 
@@ -80,7 +80,7 @@ A field update should propagate between systems in minutes. Opening a new Missio
 
 ### Incident identity survives bucket transitions
 
-A field in `hold` that becomes actionable is the same incident, not a new one. Each incident's identity combines `opportunity_id` and `field`, so the weekly rollup separates true new incidents from stabilization transitions and reports direction honestly.
+A field in `hold` that becomes actionable is the same incident, not a new one. Each incident's identity combines `opportunity_id`, the discrepancy type, and the field (or, for missing records, which system is missing it), so the weekly rollup separates true new incidents from stabilization transitions and reports direction honestly.
 
 ### Each run has a unique `run_id`
 
