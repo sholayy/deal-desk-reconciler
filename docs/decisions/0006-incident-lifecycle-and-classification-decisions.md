@@ -1,13 +1,15 @@
 # ADR 0006: Classification decisions and incident lifecycle
 
-**Status:** Proposed (revision 3)
-**Date:** 2026-11-14, revised 2026-11-15 (r2 and r3)
+**Status:** Proposed (revision 4)
+**Date:** 2026-11-14, revised 2026-11-15 (r2, r3, r4)
 **Decision owner:** Deal Desk Engineering
 **Closes:** the "Open" item in ADR 0004 (episode-closing policy and the evidence threshold for a verified fix)
 
 **Revision 2 changes**, in response to engineering review: evaluation outcomes become first-class evidence and only a positive match counts toward closure; closure and post-closure monitoring are separated; `prevention_proven` is renamed `correction_sustained` and `prevention_validated` is reserved for when control execution is observable; the run transaction is split in two; projection IDs are deterministic; cross-row invariants name their enforcement mechanism; a sixth scenario covers a null on one side.
 
 **Revision 3 changes**, in response to the second review: a run records what it was expected to evaluate (`run_input_manifest`), so completeness is a positive claim and not the absence of a bad row; completion is gated on the actual evaluation count equalling the expected count; `BOTH_PRESENT` is defined against the manifest so it proves the specific expected records exist and are linked by shared `opportunity_id`, not that two arbitrary records happen to be present; `incident_key` serialization is specified as canonical before it is hashed to a UUIDv5, so logically identical keys cannot drift to different projection IDs.
+
+**Revision 4 changes**, in response to the third review: the completion guard moves from "count equals count" to "every expected `(run, opportunity, concept)` has an evaluation row," enforced by an explicit `run_expected_evaluations` table that each `concept_evaluations` row FKs into; the manifest is anchored to source identity by storing the content SHA-256 of each source read in Transaction A on the run row, and observations carry that hash on write; evaluation-to-observation references become composite, naming `(tenant_id, run_id, opportunity_id, source)` so a reference cannot drift to an unrelated observation; the opportunity-id canonicalization paragraph drops the incorrect lowercasing of Salesforce IDs and introduces `rules.canonicalize_opportunity_id` as a pure function whose current rule matches the synthetic `OPP-\d+` format and that gains the 18-character Salesforce-ID algorithm when real SF data is wired; `incidents` carries `lifecycle_policy_version` so a rebuild under a changed policy restates history visibly rather than silently.
 
 ## Context
 
@@ -149,11 +151,12 @@ The persisted `incident_key` is a string with three segments joined by `|`:
 The serialized form is canonical, because any variation in the string changes the UUIDv5 of the projection row it belongs to and would split one incident across two episodes:
 
 - Segment separator is `|`. Segments contain no `|`; the classifier rejects an input that would introduce one.
-- All segment values are Unicode NFC-normalized and lowercased. Salesforce IDs preserve their case by convention but are lowercased in the key so that any casing drift upstream cannot produce a distinct identity.
-- `missing_from` values are the literals `salesforce` and `mission_control`. No other casing or spelling is accepted.
+- `opportunity_id` is passed through `rules.canonicalize_opportunity_id` at the input boundary. The current rule matches the synthetic format `^OPP-\d+$` and uppercases the `OPP` prefix; mixed-case or malformed IDs are rejected rather than coerced. The ADR deliberately does **not** lowercase arbitrary identifiers: Salesforce 15-character IDs are case-sensitive and lowercasing them conflates distinct records, so when real SF data is wired, this function gains the standard 18-character canonicalization and takes 15-character inputs only through that algorithm.
+- Other segment values are Unicode NFC-normalized and taken verbatim.
+- `missing_from` values are the literals `salesforce` and `mission_control`. No other casing or spelling is accepted; `rules.incident_key` normalizes to these before serialization.
 - `concept` and `subject` are drawn from `contract.yaml` names, which are already a closed set validated at load time.
 
-`rules.incident_key` is the only place in the codebase that produces this string. A test enumerates the inputs across casing, whitespace and NFC-vs-NFD and pins that logically identical inputs produce one string.
+`rules.incident_key` is the only place in the codebase that produces this string. A test enumerates the inputs across whitespace, NFC-vs-NFD, `missing_from` spellings, and `OPP-` prefix casing, and pins that logically identical inputs produce one string. A separate test asserts that `canonicalize_opportunity_id` rejects an unexpected format rather than silently reshaping it.
 
 `episode_number` starts at 1 per key and increments each time a key reopens after a closed episode.
 
@@ -212,11 +215,41 @@ Resolution events target flagged incidents (`missing_record`, `contract_gap`). A
 
 All timestamps are `timestamptz`. All tables carry `tenant_id`. Cross-table references are composite foreign keys that include `tenant_id`, as established in Increment 1.
 
-**`reconciliation_runs`** (existing; two additions)
+**`reconciliation_runs`** (existing; four additions)
 
 Add `UNIQUE (tenant_id, id, input_cutoff, ruleset_version)`. This is not for lookups. It exists so a foreign key from decisions can include `decided_at` and `ruleset_version`, which makes the database enforce that a decision's business time and ruleset equal its run's. Migration `0002` adds it.
 
-Add `expected_evaluation_count` (integer, NOT NULL, CHECK >= 0). Written in Transaction A at run start from the manifest Transaction A commits. Transaction B's `UPDATE runs SET status = 'completed'` carries the guard `WHERE (SELECT COUNT(*) FROM concept_evaluations WHERE reconciliation_run_id = runs.id) = runs.expected_evaluation_count`, so a run cannot be marked `completed` if any expected evaluation is missing. The guard runs inside Transaction B; a mismatch makes the `UPDATE` affect zero rows and the write helper raises, which rolls back Transaction B and leaves the run in `started` for recovery.
+Add `expected_evaluation_count` (integer, NOT NULL, CHECK >= 0). Written in Transaction A once `run_expected_evaluations` rows have been inserted; equals their count for the run. Kept as a convenience column so the completion guard can read it without a subquery; a CHECK ties it to the authoritative table at write time.
+
+Add `salesforce_input_sha256` and `mission_control_input_sha256` (char(64), NOT NULL). Each is the SHA-256 of the raw input bytes the batch runner read for the corresponding source before any parsing. Written in Transaction A. The batch runner holds the read content in memory and passes it to Transaction B rather than re-reading, so Transaction B cannot drift to a newer file. If the operator supplies a different file to a retry, the hash check in the write helper for observations fails and the retry is refused.
+
+Add `lifecycle_policy_version` (integer, NOT NULL, default 1). Not used by the run itself; carried for forward compatibility so that lifecycle policy changes can be tracked at the run level if we later decide to pin a run's downstream projection to a specific policy.
+
+Transaction B's `UPDATE runs SET status = 'completed'` carries the guard `WHERE (SELECT COUNT(*) FROM concept_evaluations WHERE reconciliation_run_id = runs.id) = runs.expected_evaluation_count`. Because every `concept_evaluations` row FKs into `run_expected_evaluations` (below) and the unique constraint prevents duplicates, `COUNT(evaluations) <= COUNT(expected)` always holds; equality means every expected evaluation is accounted for. The guard runs inside Transaction B; a mismatch makes the `UPDATE` affect zero rows and the write helper raises, which rolls back Transaction B and leaves the run in `started` for recovery.
+
+**`ruleset_concepts`** (insert-only; loaded at migration time and re-loaded on a ruleset version bump)
+
+| Column | Notes |
+| --- | --- |
+| `ruleset_version` | FK to the governing ruleset; NOT NULL |
+| `concept` | Concept name as it appears in `contract.yaml`'s `fields` plus the `record_presence` pseudo-concept plus each contract gap name |
+| PK | `(ruleset_version, concept)` |
+
+This table is the authoritative set of evaluation targets per ruleset version. Migration `0002` seeds the row set for `ruleset_version = 1` directly from the loaded `contract.yaml`. A bump to the ruleset version adds a new row set rather than mutating the existing one, so historical runs under the old version keep their expected set.
+
+**`run_expected_evaluations`** (insert-only; written in Transaction A)
+
+| Column | Notes |
+| --- | --- |
+| `tenant_id` | |
+| `reconciliation_run_id` | FK → runs |
+| `opportunity_id` | |
+| `concept` | |
+| Manifest FK | `(tenant_id, reconciliation_run_id, opportunity_id)` → `run_input_manifest`. A row cannot exist for an out-of-scope opportunity. |
+| Ruleset FK | `(reconciliation_run_id, concept)` composed with the run's `ruleset_version` → `ruleset_concepts`. Enforced via a composite FK that includes `ruleset_version` on both sides. A row for a concept not in the run's ruleset is rejected. |
+| PK | `(tenant_id, reconciliation_run_id, opportunity_id, concept)` |
+
+Transaction A writes this table as the Cartesian product of `run_input_manifest` rows and the `ruleset_concepts` rows for the run's `ruleset_version`. The row count equals `len(manifest) * len(ruleset_concepts)`, which is also written to `expected_evaluation_count` on the run. This table is the DB's proof that a specific `(opportunity, concept)` pair was expected to be evaluated. It is what `concept_evaluations` references, so an evaluation for an unexpected concept is a DB-level `IntegrityError`.
 
 **`run_input_manifest`** (insert-only; written in Transaction A)
 
@@ -240,18 +273,32 @@ The manifest fixes the scope of the run before any concept is evaluated. It answ
 | `tenant_id` | |
 | `reconciliation_run_id` | Composite FK → runs |
 | `opportunity_id` | |
-| Manifest FK | `(tenant_id, reconciliation_run_id, opportunity_id)` → `run_input_manifest`. Makes an evaluation for an out-of-scope opportunity impossible: the FK fails. |
+| Expected FK | `(tenant_id, reconciliation_run_id, opportunity_id, concept)` → `run_expected_evaluations`. The DB rejects an evaluation for a `(run, opportunity, concept)` triple that was not written to the expected table in Transaction A. This replaces the direct manifest FK: because `run_expected_evaluations` itself FKs to the manifest, opportunity scope is still enforced, and the concept is now enforced too. |
 | `concept` | Concept name, or `record_presence` |
 | `outcome` | `MATCH`, `MISMATCH`, `INSUFFICIENT_EVIDENCE`, `NOT_EVALUATED`, `BOTH_PRESENT`, `ONE_SIDE`. CHECK. |
-| `sf_observation_id`, `mc_observation_id` | Nullable composite FKs → observations |
+| `sf_observation_ref` | Nullable composite FK `(tenant_id, reconciliation_run_id, opportunity_id, source='salesforce')` → `observations`. Replaces a bare `sf_observation_id`. Makes it impossible to reference a Salesforce observation from a different run, opportunity or source. |
+| `mc_observation_ref` | Nullable composite FK `(tenant_id, reconciliation_run_id, opportunity_id, source='mission_control')` → `observations`. Same shape. |
 | `detail` | JSONB: which input was missing, parse errors, rule applied. For `ONE_SIDE` the detail names which side. |
 | `evaluated_at` | Equals run `input_cutoff` (enforced via the same FK pattern as decisions) |
 | Unique | `(tenant_id, reconciliation_run_id, opportunity_id, concept)` |
 | Index | `(tenant_id, opportunity_id, concept, evaluated_at)` |
 
-Volume: manifest opportunities times evaluation targets per run, where evaluation targets are the 9 reconciled concepts plus the 1 contract gap plus the `record_presence` pseudo-concept, for 11 per opportunity. At 500 in-scope opportunities that is 5,500 rows per run. Trivial for Postgres at this scale. An opportunity not in the manifest has no evaluation row; coverage is read from `run_input_manifest`, which is the authoritative source for what the run was expected to see. Retention policy is an open question below.
+The write helper `insert_concept_evaluation` additionally checks that the outcome agrees with the referenced observation values:
 
-`expected_evaluation_count` on the run row equals `COUNT(*) FROM run_input_manifest WHERE reconciliation_run_id = ...` times 11 at Transaction A commit time. The multiplier is a constant for a given ruleset version and is kept in `contract.yaml` as a derived value (not an editable one) so a ruleset change produces a different expected count for runs under that ruleset.
+- `MATCH`: both observation refs present and the two snapshot values for the concept are equal under the SOP rule.
+- `MISMATCH`: both observation refs present and the two snapshot values differ.
+- `INSUFFICIENT_EVIDENCE`: at least one observation ref is present and at least one of the two snapshot values is null or unparseable.
+- `NOT_EVALUATED`: no observation refs required; the detail names which policy excluded the concept.
+- `BOTH_PRESENT` (only valid for `concept = record_presence`): the manifest row for this opportunity has both sides true.
+- `ONE_SIDE` (only valid for `concept = record_presence`): the manifest row has exactly one side true; the detail names which.
+
+Each check is a `ValueError` on the write helper, not a DB constraint, because the comparison depends on the SOP rule for the concept. The test matrix covers one positive and one negative per outcome.
+
+Volume: manifest opportunities times evaluation targets per run. Evaluation targets equal `len(ruleset_concepts)` for the run's ruleset; at `ruleset_version = 1` that is the 9 fields plus the 1 contract gap plus the `record_presence` pseudo-concept, for 11 per opportunity. At 500 in-scope opportunities that is 5,500 `run_expected_evaluations` rows and 5,500 `concept_evaluations` rows per run, for 11,000 rows per run total across the two tables. Trivial for Postgres at this scale. An opportunity not in the manifest has no expected row and therefore no evaluation row.
+
+**`observations`** (existing; three additions in migration `0002`)
+
+Add `source_snapshot_sha256` (char(64), nullable). NOT NULL enforced by a CHECK when `reconciliation_run_id IS NOT NULL`; observations outside a run (Increment 1's webhook-driven case) remain exempt. Add `UNIQUE (tenant_id, reconciliation_run_id, opportunity_id, source)`, which is the key the evaluation composite FKs point at; this also makes "one Salesforce observation per opportunity per run" a DB fact rather than a code convention. Add a write-helper check that `source_snapshot_sha256` equals the value on the run's corresponding `{source}_input_sha256` column; a mismatch raises.
 
 **`classification_decisions`** (insert-only)
 
@@ -316,6 +363,7 @@ Actor independence (`verification.actor != claim.actor`) is a cross-row rule and
 | `superseded_by_episode` | Nullable int |
 | `effective_label` | Derived. CHECK against the seven labels. |
 | `rebuilt_through_run_id`, `rebuilt_at` | Staleness visibility |
+| `lifecycle_policy_version` | Integer, NOT NULL. The `incident_lifecycle.version` value from `contract.yaml` at the moment this row was projected. A rebuild under a changed policy updates this on every rebuilt row, so a dashboard reader can group or filter by policy version and see which rows have been retroactively restated. Published metric tables (outside this ADR) are expected to include this column so historical reports stay anchored to the policy that produced them. |
 
 **`incident_occurrences`**
 
@@ -334,9 +382,9 @@ What is immutable is the evidence. Projection rows are derived and may legitimat
 
 ### Transaction boundaries
 
-1. **Transaction A:** compute the input manifest (query both source systems at `input_cutoff` for opportunities visible in either), then in one commit insert the `reconciliation_runs` row with `status = started` and `expected_evaluation_count` set, and bulk-insert the `run_input_manifest` rows. Transaction A commits only if both sources were queryable; if a source is unreachable, nothing is written and the run never starts. The run now exists durably with its scope frozen.
-2. **Transaction B:** insert observations and concept evaluations, insert classification decisions, and update the run to `completed` with `completed_at`. The `UPDATE` carries the guard `WHERE expected_evaluation_count = (SELECT COUNT(*) FROM concept_evaluations WHERE reconciliation_run_id = runs.id)`. If the guard fails, the `UPDATE` affects zero rows, the write helper raises, and the entire Transaction B rolls back. The run stays `started` and the recovery step takes it from there. The guard makes a `completed` run a positive claim that every expected evaluation was recorded.
-3. **Recovery:** a run left in `started` past a timeout is marked `failed` by a recovery step. The projection ignores `started` and `failed` runs either way. A retry of Transaction B after a crash uses the already-committed manifest, so scope does not drift between attempts.
+1. **Transaction A:** the batch runner reads both source inputs once, computes the SHA-256 of each raw byte stream before parsing, and holds the parsed content in memory for Transaction B. In one commit it inserts the `reconciliation_runs` row with `status = started`, the two source hashes, and `expected_evaluation_count = 0`; bulk-inserts the `run_input_manifest` rows; bulk-inserts the `run_expected_evaluations` rows (manifest `JOIN` `ruleset_concepts` on the run's `ruleset_version`); and updates the run's `expected_evaluation_count` to `COUNT(*)` from `run_expected_evaluations`. Transaction A commits only if both sources were readable and both hashes computed; if either read fails, nothing is written and the run never starts. The run now exists durably with its scope frozen and anchored to specific source bytes.
+2. **Transaction B:** write observations (each carrying `source_snapshot_sha256` equal to the run's recorded hash for that source), concept evaluations, and classification decisions, then update the run to `completed` with `completed_at`. The observations are derived from the in-memory parsed content held by the batch runner, not from a re-read of source files; the write helper `insert_observation` checks that `source_snapshot_sha256` matches the run's recorded hash for the named source and raises on mismatch. The `UPDATE` to `completed` carries the guard `WHERE expected_evaluation_count = (SELECT COUNT(*) FROM concept_evaluations WHERE reconciliation_run_id = runs.id)`. If the guard fails, the `UPDATE` affects zero rows, the write helper raises, and the entire Transaction B rolls back. The run stays `started` and the recovery step takes it from there.
+3. **Recovery:** a run left in `started` past a timeout is marked `failed` by a recovery step. The projection ignores `started` and `failed` runs either way. A retry of Transaction B uses the already-committed manifest and expected-evaluations rows, and the operator must supply the same input bytes: a retry that reads a different file produces a different hash and the observation write refuses.
 4. A resolution event is a single-row insert in its own transaction.
 5. A projection rebuild is its own transaction over committed evidence only.
 
@@ -346,11 +394,12 @@ What is immutable is the evidence. Projection rows are derived and may legitimat
 
 ```yaml
 incident_lifecycle:
+  version: 1
   episode_close_after_clean_evaluations: 1
   correction_sustain_evaluations: 3
 ```
 
-`config.validate_contract` checks both are positive integers and that the second is not smaller than the first.
+`config.validate_contract` checks `version` is a positive integer, that the two thresholds are positive integers, and that `correction_sustain_evaluations` is not smaller than `episode_close_after_clean_evaluations`. A change to either threshold requires the caller to bump `version` in the same commit; `validate_contract` fails the load otherwise, so a silent threshold change is impossible. The ADR deliberately picks "fail the load" over "auto-bump the version" because an auto-bump would hide the restatement from the commit history.
 
 ## Invariants and how each is enforced
 
@@ -374,10 +423,16 @@ incident_lifecycle:
 | 16 | `effective_label` recomputed equals stored | Projection logic | Recompute and compare |
 | 17 | A decision belongs to exactly one episode | Composite PK on occurrences | Second attachment → `IntegrityError` |
 | 18 | Naive timestamps rejected at the write boundary | Write helpers (existing pattern) | Existing test, extended to new helpers |
-| 19 | Every `concept_evaluations` row targets an in-scope opportunity | Composite FK to `run_input_manifest` | Insert for an opportunity not in the manifest → `IntegrityError` |
-| 20 | A run reaches `completed` only when its actual evaluation count equals `expected_evaluation_count` | Guarded `UPDATE` inside Transaction B | Insert one fewer evaluation than expected → write helper raises; run stays `started` |
-| 21 | `incident_key` serialization is canonical across casing, whitespace, Unicode form and `missing_from` spelling | `rules.incident_key` normalization | Parametrized test enumerating drift cases returns one string |
+| 19 | Every `concept_evaluations` row targets an expected `(opportunity, concept)` for its run | Composite FK to `run_expected_evaluations` (which itself FKs to the manifest and to `ruleset_concepts`) | Insert for an unexpected concept or out-of-scope opportunity → `IntegrityError` |
+| 20 | A run reaches `completed` only when its evaluation count equals `expected_evaluation_count` | Guarded `UPDATE` inside Transaction B | Insert one fewer evaluation than expected → write helper raises; run stays `started` |
+| 21 | `incident_key` serialization is canonical across whitespace, Unicode form, `missing_from` spelling, and `OPP-` prefix casing | `rules.incident_key` normalization | Parametrized test enumerating drift cases returns one string |
 | 22 | `BOTH_PRESENT` is only recorded when the manifest row has both sides true for this opportunity | Write helper reads the manifest row; outcome and manifest must agree | Write a `BOTH_PRESENT` evaluation where the manifest has one side false → `ValueError` |
+| 23 | Every expected evaluation has a matching recorded evaluation when a run is `completed` | Invariant 19 (every evaluation targets an expected row, no duplicates) plus invariant 20 (counts equal); together, pigeonhole says every expected row has one evaluation | Delete one expected row's evaluation before the completion `UPDATE` → run stays `started` |
+| 24 | Observations attached to a run carry the run's recorded source hash | `insert_observation` write helper check | Insert an observation with a hash that does not match the run's `{source}_input_sha256` → `ValueError` |
+| 25 | An evaluation's observation reference belongs to the same `(tenant, run, opportunity, source)` as the evaluation | Composite FK on each observation ref | Insert an evaluation referencing an observation from a different run, opportunity, or source → `IntegrityError` |
+| 26 | An evaluation's outcome agrees with the referenced observations | `insert_concept_evaluation` write helper | Six tests, one per outcome, each exercising one passing and one failing observation state |
+| 27 | `opportunity_id` entering `incident_key` has passed `canonicalize_opportunity_id`, and an unexpected format is rejected rather than coerced | Pure function at the input boundary | Pass `opp-001` or `OPP-1A` to the classifier → `ValueError` at the input boundary |
+| 28 | `incidents` carries the `lifecycle_policy_version` under which it was projected | Projection logic | Rebuild after changing `incident_lifecycle.version` → all incident rows show the new version |
 
 ## Alternatives considered
 
@@ -433,9 +488,9 @@ Rejected after review. It cannot both be atomic and leave a durable `started` ma
 
 ## Increment plan
 
-**Increment 2a: classification evidence.** `missing_from` on classifier output and in `rules.incident_key`, with the snapshot regenerated in the same commit. Canonical-serialization normalization in `rules.incident_key` with the drift test. `rules.evaluate_concepts` as a pure function with its own tests. `rules.compute_manifest` as a pure function over the two input snapshots. Migration `0002`: the runs unique key, `expected_evaluation_count` on runs, `run_input_manifest`, `concept_evaluations` with its FK to the manifest, `classification_decisions`. Write helpers `insert_run_with_manifest` (one call writes both in Transaction A), `insert_concept_evaluation` with the manifest-agreement check, `insert_classification_decision` with the outcome check, and `mark_run_completed` carrying the count guard. `incident_lifecycle` in `contract.yaml` with validation. Tests for invariants 1, 2, 3, 4, 11, 12, 18, 19, 20, 21, 22.
+**Increment 2a: classification evidence.** `missing_from` on classifier output and in `rules.incident_key`, with the snapshot regenerated in the same commit. `rules.canonicalize_opportunity_id` as a pure function with the format-rejection test. Canonical-serialization normalization in `rules.incident_key` with the drift test. `rules.evaluate_concepts` as a pure function that emits a row per `(opportunity, concept)` including `NOT_EVALUATED` for policy-excluded concepts; its tests cover each outcome. `rules.compute_manifest` and `rules.compute_expected_evaluations` as pure functions. Migration `0002`: the runs unique key, `salesforce_input_sha256`, `mission_control_input_sha256`, `expected_evaluation_count` and `lifecycle_policy_version` on runs; `ruleset_concepts` seeded from `contract.yaml`; `run_input_manifest`; `run_expected_evaluations` with its FKs to the manifest and `ruleset_concepts`; `concept_evaluations` with its composite FKs to `run_expected_evaluations` and `observations`; `classification_decisions`; `source_snapshot_sha256` and the composite UNIQUE on `observations`. Write helpers: `insert_run_with_manifest_and_expected` (one Transaction A call writes the run row, the manifest, and the expected-evaluations rows, and sets `expected_evaluation_count`); `insert_observation` extended with the hash check; `insert_concept_evaluation` with the outcome-versus-observation check and the manifest check for `record_presence`; `insert_classification_decision` with the outcome check; `mark_run_completed` carrying the count guard. `incident_lifecycle.version` in `contract.yaml` with validation. Tests for invariants 1, 2, 3, 4, 11, 12, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27.
 
-**Increment 2b: lifecycle projection.** Migration `0003`: `resolution_events`, `incidents`, `incident_occurrences`. `db/projection.rebuild_incidents(tenant_id)` implementing the lifecycle above including monitoring. `resolve.py` dual-write. `tests/test_incident_lifecycle.py` with Scenarios A, B1, B2, B3, C, D, E, F as fixtures. Tests for invariants 5 through 10, 13, 15, 16, 17.
+**Increment 2b: lifecycle projection.** Migration `0003`: `resolution_events`, `incidents` (including `lifecycle_policy_version`), `incident_occurrences`. `db/projection.rebuild_incidents(tenant_id)` implementing the lifecycle above including monitoring; the rebuild stamps `lifecycle_policy_version` from the live `contract.yaml` on every row it produces. `resolve.py` dual-write. `tests/test_incident_lifecycle.py` with Scenarios A, B1, B2, B3, C, D, E, F as fixtures. Tests for invariants 5 through 10, 13, 15, 16, 17, 28.
 
 **Increment 2c: operational verification.** `insert_resolution_event` with the independence check (invariant 14). Rebuild stability under configuration change. Key-level recurrence and time-to-first-clean metrics as SQL. Chronology edge cases.
 
@@ -451,14 +506,17 @@ Rejected after review. It cannot both be atomic and leave a durable `started` ma
 
 ## Open questions for review
 
-1. **Retention for `concept_evaluations` and `run_input_manifest`.** Proposal: keep every evaluation row for the sustain window plus a margin (say 30 runs), then roll `MATCH` rows up to a per-key daily count and keep `MISMATCH`, `INSUFFICIENT_EVIDENCE` and `ONE_SIDE` rows indefinitely. Manifest rows are kept as long as any evaluation for the run exists, so a `completed` run always has provable scope. Not needed for Increment 2; needed before any multi-month deployment.
+1. **Retention for `concept_evaluations`, `run_expected_evaluations` and `run_input_manifest`.** Proposal: keep every evaluation row for the sustain window plus a margin (say 30 runs), then roll `MATCH` rows up to a per-key daily count and keep `MISMATCH`, `INSUFFICIENT_EVIDENCE` and `ONE_SIDE` rows indefinitely. Manifest and expected-evaluation rows are kept as long as any evaluation for the run exists, so a `completed` run always has provable scope. Not needed for Increment 2; needed before any multi-month deployment.
 2. **Recovery timeout** for marking a `started` run as `failed`. Proposal: a parameter `run_stale_after_minutes` with a default of 60, applied by a small recovery function in Increment 2c.
 3. **Source unavailability at manifest time.** Transaction A requires both sources. If one is unreachable, no run is created and the caller sees the error. Open question: do we want a `source_unreachable` state recorded for observability, or is the operator notification enough? Lean toward not recording it until operations tells us otherwise, so the evidence table only holds runs that had a fair chance to see everything.
+4. **Hashing granularity.** The ADR hashes the raw input bytes before parsing. A whitespace-only or line-ending change in the CSV would produce a different hash and refuse a legitimate retry. For the synthetic data this is desirable (strict reproducibility). For real integrations it may be too strict; consider a parse-normalized hash at that point. Not needed for Increment 2.
+5. **Policy-version pinning on existing published metrics.** The ADR stamps `lifecycle_policy_version` on `incidents` rows but leaves it to downstream tables to copy the value when snapshotting metrics for a report. Open question: do we build a `metric_snapshots` table in Increment 3 that carries the policy version, or require every consumer to record it? Lean toward the former so restatements are visible from a single place.
 
 ## References
 
 - `rules.py`: `incident_key`, `latest_prior_resolution`, `classify_discrepancies`, and the null-skip behavior pinned by `test_null_value_is_skipped_silently`.
 - `resolve.py`: current resolution capture and chronology enforcement.
 - `docs/decisions/0004-postgres-event-store-docker-compose.md`: the three-layer model and the open item this ADR closes.
-- `db/models.py`, `db/writes.py`: Increment 1 tables and the write-boundary validation pattern this ADR extends.
+- `db/models.py`, `db/writes.py`: Increment 1 tables and the write-boundary validation pattern this ADR extends. The `observations` extensions in Increment 2a (`source_snapshot_sha256`, composite UNIQUE) build on the existing composite FK to runs.
 - Review notes, revision 2: scope-completeness and canonical-identity feedback that produced revision 3.
+- Review notes, revision 3: coverage-shape, source-snapshot-binding, observation-reference-identity, Salesforce-ID canonicalization and policy-version feedback that produced revision 4.
