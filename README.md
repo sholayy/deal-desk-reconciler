@@ -98,12 +98,13 @@ Repeat executions on the same day do not inflate dashboard or weekly counts. Dow
 - `data/generate.py`: parameterized synthetic data generator with reproducible seeds and controlled drift rates.
 - `config.py`: validated loader for the two YAML sources of truth, used by the batch loader, the API, and the generator.
 - Dashboard and weekly rollup as static HTML generated per run.
-- 67+ tests across `tests/`.
+- PostgreSQL event store: SQLAlchemy models for reconciliation runs, source events, and observations, with Alembic migration `0001` and a Docker Compose stack for local development. See `docs/decisions/0004-postgres-event-store-docker-compose.md`.
+- 72 tests pass with no external dependencies. A further 12 run against a local PostgreSQL and skip when no database is configured.
 
 ### Designed, not yet implemented
 
-- PostgreSQL event store with Alembic migrations, Docker Compose for local development. See `docs/decisions/0004-postgres-event-store-docker-compose.md`.
-- Incident lifecycle projection separating operator-claimed resolution, observation-confirmed absence, independently-verified correction, and prevention-validated states. ADR in draft.
+- Classification-evidence layer: a durable record of every comparison outcome (match, mismatch, insufficient evidence, not evaluated) so a clean run is positive proof of agreement rather than the mere absence of a flag. ADR 0006 is accepted and specifies the schema and the pure-function logic; implementation is underway and not yet merged to `main`.
+- Incident lifecycle projection on top of that evidence, separating operator-claimed resolution, observation-confirmed absence, independently-verified correction, and sustained-correction states. Designed in ADR 0006; not built.
 - Write-back layer with explicit `execution_status` tracking (proposed → applied → failed) and dry-run default.
 - Orchestration layer (n8n, Temporal, or similar) receiving Salesforce webhooks and routing decisions.
 
@@ -120,7 +121,7 @@ Named explicitly because the signal is seeing the gaps.
 
 - **No write-back.** The engine classifies and proposes. It does not update Salesforce or Mission Control. The audit log is the source of truth the write-back layer would read from.
 - **Recency uses record-level timestamps.** A newer record timestamp does not prove the contract value itself changed more recently. The stronger fix is field-level change history or an authoritative contract version source.
-- **The engine silently skips missing field values.** When either side is NaN, it bypasses the comparison entirely. The right fix is to track skipped comparisons as a separate category and surface them in the weekly rollup.
+- **The engine silently skips missing field values.** When either side is NaN, it bypasses the comparison entirely, so a skipped comparison currently looks the same as agreement. ADR 0006 fixes this by recording an explicit `insufficient_evidence` outcome for every skipped comparison; that evidence layer is specified and in progress, not yet on `main`.
 - **No multi-tenant namespace.** Opportunity IDs and event IDs would collide across organizations. Single-tenant demo only; a future ADR covers the namespacing.
 - **No authentication on the API.** Intentional for local development. A future ADR must land before any non-local deployment.
 - **Simulated time, not wall clock.** `contract.yaml` pins a `simulated_now` so tests and demos are reproducible. A production deployment unpins this.
